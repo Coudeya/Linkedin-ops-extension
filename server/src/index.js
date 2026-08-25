@@ -259,7 +259,21 @@ async function handleClayCallback(request, env, ctx) {
     return json({ error: "invalid_linkedin_url" }, 400, request, env);
   }
 
-  const fields = body.fields && typeof body.fields === "object" ? body.fields : {};
+  // Accept either a nested {"fields": {...}} object, or - to make the Clay
+  // side easier to build - any other top-level keys treated directly as
+  // fields (i.e. just POST {"entityType": "...", "linkedinUrl": "...",
+  // "Telephone": "...", "Email": "..."}).
+  const RESERVED_KEYS = new Set(["entityType", "linkedinUrl", "fields"]);
+  let fields = {};
+  if (body.fields && typeof body.fields === "object") {
+    fields = body.fields;
+  } else {
+    for (const [key, value] of Object.entries(body)) {
+      if (!RESERVED_KEYS.has(key) && value !== null && value !== undefined && value !== "") {
+        fields[key] = value;
+      }
+    }
+  }
 
   if (!env.APP_KV) {
     console.warn("app_kv_missing_cannot_store_completion");
