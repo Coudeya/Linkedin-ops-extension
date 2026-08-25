@@ -38,6 +38,33 @@ HubSpot ni les URLs de webhook Clay**. Elle ne peut faire qu'une seule chose
 Google valide, encore vérifié côté serveur, pour un compte du domaine
 `webyn.ai`.
 
+### Suivi en temps réel de l'enrichissement Clay
+
+Clay ne propose pas de webhook entrant "synchrone" (qui attendrait que les
+colonnes soient calculées avant de répondre). Le suivi fonctionne donc en
+deux temps :
+
+1. La **dernière colonne** de chaque table Clay (contacts et entreprises)
+   est une colonne **HTTP API** sortante qui POST les champs enrichis vers
+   `POST /clay-callback` dès que la ligne a fini de tourner. Cet endpoint
+   n'est pas authentifié par Google (Clay n'est pas un compte Webyn) mais
+   par un secret partagé (`CLAY_CALLBACK_SECRET`, header
+   `X-Callback-Secret`). Le payload attendu est plat :
+   `{"entityType": "contact"|"company", "linkedinUrl": "...", "Champ 1": "...", "Champ 2": "..."}`
+   — chaque clé autre que `entityType`/`linkedinUrl` devient un champ
+   affiché dans l'extension comme "ajouté par Clay".
+2. Le Worker stocke ce payload dans **Cloudflare KV** (binding `APP_KV`),
+   pendant 15 minutes, indexé par URL LinkedIn normalisée.
+3. L'extension appelle `GET /enrich-status` toutes les ~1,5s (jusqu'à ~21s)
+   après avoir déclenché l'enrichissement, pour savoir si le résultat est
+   arrivé.
+
+Point d'attention en configurant la colonne HTTP API côté Clay : chaque
+champ inséré dans le Body via `/` doit être marqué **optionnel** (toggle
+désactivé), sinon Clay refuse de lancer l'appel dès qu'un des champs
+référencés est vide sur une ligne ("Some inputs missing") — seul le champ
+LinkedIn URL doit rester obligatoire.
+
 ## Pourquoi ces choix de sécurité
 
 - **Compte Google restreint au domaine `webyn.ai`** : le client OAuth est
@@ -127,10 +154,16 @@ cd server
 npm install
 npx wrangler login
 
+# KV namespace (rate limiting + suivi de l'enrichissement Clay)
+npx wrangler kv namespace create APP_KV
+# -> coller l'id renvoyé dans le binding [[kv_namespaces]] de wrangler.toml
+
 # Secrets (jamais commités)
 npx wrangler secret put HUBSPOT_TOKEN
 npx wrangler secret put CLAY_CONTACT_WEBHOOK_URL
 npx wrangler secret put CLAY_COMPANY_WEBHOOK_URL
+npx wrangler secret put CLAY_CALLBACK_SECRET
+# -> generer une valeur aleatoire, ex: openssl rand -hex 32
 ```
 
 Éditer `server/wrangler.toml` :
@@ -151,14 +184,22 @@ npx wrangler deploy
 
 Notez l'URL du Worker affichée (`https://webyn-linkedin-clay-gateway.<sous-domaine>.workers.dev`).
 
-### Rate limiting (optionnel mais recommandé)
+### Colonne HTTP API sortante dans Clay
 
-```bash
-npx wrangler kv namespace create RATE_LIMIT_KV
-```
+Sur **chaque** table Clay (contacts et entreprises), ajoutez une colonne de
+type **"HTTP API"** tout à la fin du waterfall :
 
-Décommenter et renseigner le binding `[[kv_namespaces]]` dans
-`wrangler.toml` avec l'`id` renvoyé, puis redéployer.
+- Method : `POST`
+- Endpoint : `https://<url-du-worker>/clay-callback`
+- Headers : `Content-Type: application/json`,
+  `X-Callback-Secret: <valeur de CLAY_CALLBACK_SECRET>`
+- Body (JSON, avec les colonnes inserees via `/`) :
+  `{"entityType": "contact", "linkedinUrl": "<colonne LinkedIn>", "Telephone": "<colonne>", "Email": "<colonne>", ...}`
+  (`"company"` pour la table entreprises)
+- Marquez **optionnel** (toggle desactive) tous les champs sauf
+  `linkedinUrl`, sinon Clay saute l'appel des qu'un champ reference est vide
+  sur une ligne.
+- Verifiez qu'"Auto-run" est actif pour cette colonne.
 
 ## 6. Configurer l'extension
 
