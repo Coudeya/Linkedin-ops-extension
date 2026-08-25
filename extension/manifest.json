@@ -4,7 +4,6 @@
   "version": "1.0.0",
   "description": "Reserve aux sales Webyn : enrichit un profil ou une entreprise LinkedIn via Clay et indique s'il existe deja dans HubSpot.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA161oImdJbgK2XWgBJx9NLZdvbhNAC1yF0lYwmB7VJAeKjptsk7Mj42K2Lpzin/7xCuz+zCWEkdJy/NGsX68dsxHpAI2jsXgIg24C44IuMZDiX/UgPsgyRnE8hdFcyRiSoxHYB37Utz13m1QEIkG5XTS4EnU0uqr+DSTM0DvXnwSMRZ4RUEgeVL3cHNl0foWklpgeHRcuakt8WxwNjM41UU6uO4Y+BoaM4mIHfmaGuuMT7c/DFEA0ptcOdIsiguLuXHjnI7/O2RjAt7jIM+/+aN+JoAmT5iF7Xr/vIK3aaeBX1QiFXg8uCJYqClbqtFpEkz80A2J4XgpEq5vSMtnXBQIDAQAB",
-  "default_locale": "fr",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
