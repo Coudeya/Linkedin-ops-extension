@@ -383,6 +383,13 @@
     busy = false;
   }
 
+  const FATAL_POLL_ERRORS = new Set([
+    "auth_expired",
+    "no_token",
+    "domain_not_allowed",
+    "email_not_allowed",
+  ]);
+
   function pollForCompletion(entityType, linkedinUrl, attempt) {
     pollTimer = setTimeout(async () => {
       let response;
@@ -392,12 +399,23 @@
           payload: { entityType, linkedinUrl },
         });
       } catch (err) {
-        finishPolling(false, "Erreur pendant le suivi de l'enrichissement : " + describeErr(err));
+        // Transient (extension messaging hiccup, network blip) - keep retrying.
+        if (attempt + 1 >= POLL_MAX_ATTEMPTS) {
+          finishPolling(false, "Erreur pendant le suivi de l'enrichissement : " + describeErr(err));
+          return;
+        }
+        pollForCompletion(entityType, linkedinUrl, attempt + 1);
         return;
       }
 
       if (!response.ok) {
-        finishPolling(false, authOrErrorMessage(response.error));
+        // A permanent auth/permission error stops immediately; anything else
+        // (a transient backend hiccup) is retried like a "pending" status.
+        if (FATAL_POLL_ERRORS.has(response.error) || attempt + 1 >= POLL_MAX_ATTEMPTS) {
+          finishPolling(false, authOrErrorMessage(response.error));
+          return;
+        }
+        pollForCompletion(entityType, linkedinUrl, attempt + 1);
         return;
       }
 
