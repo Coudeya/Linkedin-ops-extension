@@ -256,6 +256,10 @@ async function handleClayCallback(request, env, ctx) {
 
   const normalized = normalizeLinkedInUrl(body.linkedinUrl, entityType);
   if (!normalized) {
+    console.warn(
+      "clay_callback_invalid_linkedin_url",
+      JSON.stringify({ entityType, linkedinUrlRaw: body.linkedinUrl, bodyKeys: Object.keys(body) })
+    );
     return json({ error: "invalid_linkedin_url" }, 400, request, env);
   }
 
