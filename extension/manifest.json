@@ -33,7 +33,7 @@
   ],
   "permissions": ["identity", "storage"],
   "host_permissions": [
-    "https://REPLACE_ME.workers.dev/*"
+    "https://webyn-linkedin-clay-gateway.alexandrecoude-df4.workers.dev/*"
   ],
   "oauth2": {
     "client_id": "REPLACE_WITH_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com",
