@@ -7,7 +7,7 @@ compatibility_date = "2024-11-01"
 # then update secrets with `wrangler secret put <NAME>` (see README).
 [vars]
 ALLOWED_DOMAIN = "webyn.ai"
-GOOGLE_OAUTH_CLIENT_ID = "REPLACE_WITH_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com"
+GOOGLE_OAUTH_CLIENT_ID = "978500073534-c05s0cdmla47oeh69v1qj2mb8fjqe2c4.apps.googleusercontent.com"
 ALLOWED_EXTENSION_ORIGINS = "chrome-extension://gnbddgombfbmjcdhaafkjccnodbfpplp"
 HUBSPOT_PORTAL_ID = "144488790"
 HUBSPOT_UI_DOMAIN = "app-eu1.hubspot.com"

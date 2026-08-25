@@ -36,7 +36,7 @@
     "https://webyn-linkedin-clay-gateway.alexandrecoude-df4.workers.dev/*"
   ],
   "oauth2": {
-    "client_id": "REPLACE_WITH_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com",
+    "client_id": "978500073534-c05s0cdmla47oeh69v1qj2mb8fjqe2c4.apps.googleusercontent.com",
     "scopes": ["email", "profile"]
   },
   "minimum_chrome_version": "116"
