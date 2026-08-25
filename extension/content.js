@@ -8,7 +8,7 @@
 
 (function () {
   const POLL_INTERVAL_MS = 1500;
-  const POLL_MAX_ATTEMPTS = 14; // ~21s of polling
+  const POLL_MAX_ATTEMPTS = 24; // ~36s of polling
 
   const PANEL_CSS = `
     :host {
