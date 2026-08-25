@@ -116,7 +116,7 @@ async function route(request, env, ctx) {
     return handleEnrich(request, env, ctx);
   }
 
-  if (url.pathname === "/enrich-status" && request.method === "GET") {
+  if (url.pathname === "/enrich-status" && request.method === "POST") {
     return handleEnrichStatus(request, env, ctx);
   }
 
@@ -130,15 +130,6 @@ async function route(request, env, ctx) {
 async function authenticate(request, env) {
   const origin = request.headers.get("Origin") || "";
   if (!isAllowedOrigin(origin, env)) {
-    console.warn(
-      "forbidden_origin_debug",
-      JSON.stringify({
-        url: request.url,
-        method: request.method,
-        originReceived: origin,
-        allowedList: env.ALLOWED_EXTENSION_ORIGINS,
-      })
-    );
     return { ok: false, error: "forbidden_origin", status: 403 };
   }
 
@@ -213,9 +204,15 @@ async function handleEnrichStatus(request, env, ctx) {
   const auth = await authenticate(request, env);
   if (!auth.ok) return json({ error: auth.error }, auth.status, request, env);
 
-  const url = new URL(request.url);
-  const entityType = url.searchParams.get("entityType");
-  const rawLinkedinUrl = url.searchParams.get("linkedinUrl") || "";
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, request, env);
+  }
+
+  const entityType = body.entityType;
+  const rawLinkedinUrl = body.linkedinUrl || "";
 
   if (entityType !== "contact" && entityType !== "company") {
     return json({ error: "invalid_entity_type" }, 400, request, env);

@@ -17,11 +17,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "ENRICH_STATUS") {
-    const params = new URLSearchParams({
-      entityType: message.payload.entityType,
-      linkedinUrl: message.payload.linkedinUrl,
-    });
-    handleRequest("GET", `/enrich-status?${params.toString()}`, null, false)
+    handleRequest("POST", "/enrich-status", message.payload, false)
       .then((result) => sendResponse({ ok: true, result }))
       .catch((err) => sendResponse({ ok: false, error: describeError(err) }));
     return true;
