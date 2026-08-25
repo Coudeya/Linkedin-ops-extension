@@ -177,8 +177,9 @@ async function lookupInHubspot(linkedinUrl, entityType, env) {
 
   const typeId = entityType === "contact" ? "0-1" : "0-2";
   const portalId = env.HUBSPOT_PORTAL_ID;
+  const uiDomain = env.HUBSPOT_UI_DOMAIN || "app.hubspot.com";
   const url = portalId
-    ? `https://app.hubspot.com/contacts/${portalId}/record/${typeId}/${hit.id}`
+    ? `https://${uiDomain}/contacts/${portalId}/record/${typeId}/${hit.id}`
     : null;
 
   return { exists: true, url };
