@@ -130,6 +130,15 @@ async function route(request, env, ctx) {
 async function authenticate(request, env) {
   const origin = request.headers.get("Origin") || "";
   if (!isAllowedOrigin(origin, env)) {
+    console.warn(
+      "forbidden_origin_debug",
+      JSON.stringify({
+        url: request.url,
+        method: request.method,
+        originReceived: origin,
+        allowedList: env.ALLOWED_EXTENSION_ORIGINS,
+      })
+    );
     return { ok: false, error: "forbidden_origin", status: 403 };
   }
 
