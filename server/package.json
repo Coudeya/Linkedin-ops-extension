@@ -1,0 +1,14 @@
+{
+  "name": "webyn-linkedin-clay-gateway",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Cloudflare Worker gateway: verifies Webyn Google identity, checks HubSpot, triggers Clay enrichment.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}

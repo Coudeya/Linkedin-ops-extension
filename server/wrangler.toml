@@ -1,0 +1,27 @@
+name = "webyn-linkedin-clay-gateway"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# Non-secret configuration. Set the real values with:
+#   wrangler deploy
+# then update secrets with `wrangler secret put <NAME>` (see README).
+[vars]
+ALLOWED_DOMAIN = "webyn.ai"
+GOOGLE_OAUTH_CLIENT_ID = "REPLACE_WITH_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com"
+ALLOWED_EXTENSION_ORIGINS = "chrome-extension://gnbddgombfbmjcdhaafkjccnodbfpplp"
+HUBSPOT_PORTAL_ID = "REPLACE_WITH_HUBSPOT_PORTAL_ID"
+# Optional extra allow-list on top of the @webyn.ai domain check, comma
+# separated. Leave empty to trust every @webyn.ai account.
+ALLOWED_EMAILS = ""
+
+# Optional: bind a KV namespace to enable per-user rate limiting.
+# Create it with `wrangler kv namespace create RATE_LIMIT_KV` and paste the
+# resulting id below.
+# [[kv_namespaces]]
+# binding = "RATE_LIMIT_KV"
+# id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# Secrets (never put real values here - use `wrangler secret put`):
+#   HUBSPOT_TOKEN
+#   CLAY_CONTACT_WEBHOOK_URL
+#   CLAY_COMPANY_WEBHOOK_URL

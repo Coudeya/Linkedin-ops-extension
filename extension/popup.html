@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <title>Webyn — LinkedIn vers Clay/HubSpot</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Webyn · LinkedIn → Clay/HubSpot</h1>
+    </header>
+
+    <section id="account-section">
+      <p id="account-status">Verification du compte…</p>
+      <button id="signin-btn" type="button" hidden>Se connecter avec Google</button>
+      <button id="signout-btn" type="button" hidden>Se deconnecter</button>
+    </section>
+
+    <section id="usage-section">
+      <p>
+        Ouvrez un profil (<code>linkedin.com/in/…</code>) ou une page
+        entreprise (<code>linkedin.com/company/…</code>) sur LinkedIn : un
+        bouton <strong>“Enrichir via Clay”</strong> apparait en bas a droite
+        de la page.
+      </p>
+      <ol>
+        <li>Il verifie d'abord si la fiche existe deja dans HubSpot.</li>
+        <li>Si non, il lance l'enrichissement Clay automatiquement.</li>
+      </ol>
+    </section>
+
+    <footer>
+      <p>Reserve aux comptes Google Webyn (@webyn.ai).</p>
+    </footer>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
