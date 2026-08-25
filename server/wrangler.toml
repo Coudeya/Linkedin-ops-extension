@@ -15,14 +15,14 @@ HUBSPOT_UI_DOMAIN = "app-eu1.hubspot.com"
 # separated. Leave empty to trust every @webyn.ai account.
 ALLOWED_EMAILS = ""
 
-# Optional: bind a KV namespace to enable per-user rate limiting.
-# Create it with `wrangler kv namespace create RATE_LIMIT_KV` and paste the
-# resulting id below.
-# [[kv_namespaces]]
-# binding = "RATE_LIMIT_KV"
-# id = "REPLACE_WITH_KV_NAMESPACE_ID"
+# KV namespace used for per-user rate limiting AND for passing the Clay
+# completion payload from /clay-callback to /enrich-status.
+[[kv_namespaces]]
+binding = "APP_KV"
+id = "49473c6cb0a8416a85a897f8e3898144"
 
 # Secrets (never put real values here - use `wrangler secret put`):
 #   HUBSPOT_TOKEN
 #   CLAY_CONTACT_WEBHOOK_URL
 #   CLAY_COMPANY_WEBHOOK_URL
+#   CLAY_CALLBACK_SECRET

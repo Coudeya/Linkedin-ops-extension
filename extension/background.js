@@ -7,25 +7,39 @@ importScripts("config.js");
 // account's domain before doing anything with HubSpot or Clay.
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!message || message.type !== "ENRICH") return false;
+  if (!message) return false;
 
-  handleEnrich(message.payload)
-    .then((result) => sendResponse({ ok: true, result }))
-    .catch((err) => sendResponse({ ok: false, error: describeError(err) }));
+  if (message.type === "ENRICH") {
+    handleRequest("POST", "/enrich", message.payload, true)
+      .then((result) => sendResponse({ ok: true, result }))
+      .catch((err) => sendResponse({ ok: false, error: describeError(err) }));
+    return true; // keep the message channel open for the async response
+  }
 
-  return true; // keep the message channel open for the async response
+  if (message.type === "ENRICH_STATUS") {
+    const params = new URLSearchParams({
+      entityType: message.payload.entityType,
+      linkedinUrl: message.payload.linkedinUrl,
+    });
+    handleRequest("GET", `/enrich-status?${params.toString()}`, null, false)
+      .then((result) => sendResponse({ ok: true, result }))
+      .catch((err) => sendResponse({ ok: false, error: describeError(err) }));
+    return true;
+  }
+
+  return false;
 });
 
-async function handleEnrich(payload) {
-  const token = await getAuthToken(true);
+async function handleRequest(method, path, payload, interactive) {
+  const token = await getAuthToken(interactive);
 
-  const res = await fetch(`${BACKEND_BASE_URL}/enrich`, {
-    method: "POST",
+  const res = await fetch(`${BACKEND_BASE_URL}${path}`, {
+    method,
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify(payload),
+    body: payload ? JSON.stringify(payload) : undefined,
   });
 
   if (res.status === 401) {

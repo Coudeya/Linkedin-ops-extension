@@ -2,16 +2,31 @@
  * Webyn LinkedIn -> Clay/HubSpot gateway
  *
  * This Worker is the ONLY component that holds real secrets (HubSpot private
- * app token, Clay webhook URLs). The Chrome extension never talks to HubSpot
- * or Clay directly - it only ever calls this Worker, over HTTPS, with a
- * Google OAuth access token proving the caller is signed in with a
- * @<ALLOWED_DOMAIN> Workspace account.
+ * app token, Clay webhook URLs, Clay callback secret). The Chrome extension
+ * never talks to HubSpot or Clay directly - it only ever calls this Worker,
+ * over HTTPS, with a Google OAuth access token proving the caller is signed
+ * in with a @<ALLOWED_DOMAIN> Workspace account.
+ *
+ * Flow:
+ *   1. Extension calls POST /enrich - Worker checks HubSpot (fast, live
+ *      properties returned as `existingFields`), and if the record isn't
+ *      there yet (or `force` is set) triggers the Clay webhook.
+ *   2. If triggered, the extension polls GET /enrich-status until Clay
+ *      finishes running that row's waterfall.
+ *   3. Clay's *last* column in each table's waterfall is an outbound
+ *      webhook/API action that POSTs the row's enriched fields to
+ *      POST /clay-callback once the row is done. This endpoint is NOT
+ *      Google-authenticated (Clay isn't a Webyn user) - it's protected by a
+ *      shared secret header instead. The payload is cached briefly in KV,
+ *      keyed by the normalized LinkedIn URL, for /enrich-status to read.
  *
  * Required secrets (wrangler secret put <NAME>):
- *   HUBSPOT_TOKEN            HubSpot private app token (crm.objects.contacts.read,
- *                             crm.objects.companies.read scopes)
- *   CLAY_CONTACT_WEBHOOK_URL  "Webhooks - Instant" trigger URL of the contact table
- *   CLAY_COMPANY_WEBHOOK_URL  "Webhooks - Instant" trigger URL of the company table
+ *   HUBSPOT_TOKEN              HubSpot private app token (crm.objects.contacts.read,
+ *                               crm.objects.companies.read scopes)
+ *   CLAY_CONTACT_WEBHOOK_URL    "Webhooks - Instant" trigger URL of the contact table
+ *   CLAY_COMPANY_WEBHOOK_URL    "Webhooks - Instant" trigger URL of the company table
+ *   CLAY_CALLBACK_SECRET        Shared secret Clay's outbound webhook column must send
+ *                               back as the `X-Callback-Secret` header
  *
  * Required vars (wrangler.toml [vars], not secret but still not exposed to the
  * extension - only read server-side):
@@ -25,7 +40,11 @@
  * Optional:
  *   ALLOWED_EMAILS            Comma separated explicit allow-list, extra layer
  *                             on top of the domain check
- *   RATE_LIMIT_KV binding     KV namespace used to throttle abuse (per user)
+ *
+ * Required binding:
+ *   APP_KV   KV namespace used both for per-user rate limiting and for
+ *            passing the Clay completion payload from /clay-callback to
+ *            /enrich-status.
  */
 
 const CONTACT_URL_RE = /^https:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/in\/([^/?#]+)/i;
@@ -33,6 +52,43 @@ const COMPANY_URL_RE = /^https:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/company\/([^/
 
 const RATE_LIMIT_MAX_REQUESTS = 60; // per user, per hour
 const RATE_LIMIT_WINDOW_SECONDS = 60 * 60;
+const COMPLETION_TTL_SECONDS = 15 * 60;
+
+const CONTACT_PROPERTIES = [
+  "linkedinbio",
+  "firstname",
+  "lastname",
+  "email",
+  "phone",
+  "jobtitle",
+  "company",
+];
+const CONTACT_PROPERTY_LABELS = {
+  firstname: "Prenom",
+  lastname: "Nom",
+  email: "Email",
+  phone: "Telephone",
+  jobtitle: "Poste",
+  company: "Entreprise",
+};
+
+const COMPANY_PROPERTIES = [
+  "linkedin_company_page",
+  "name",
+  "domain",
+  "industry",
+  "city",
+  "country",
+  "numberofemployees",
+];
+const COMPANY_PROPERTY_LABELS = {
+  name: "Nom",
+  domain: "Domaine",
+  industry: "Secteur",
+  city: "Ville",
+  country: "Pays",
+  numberofemployees: "Effectif",
+};
 
 export default {
   async fetch(request, env, ctx) {
@@ -60,28 +116,42 @@ async function route(request, env, ctx) {
     return handleEnrich(request, env, ctx);
   }
 
+  if (url.pathname === "/enrich-status" && request.method === "GET") {
+    return handleEnrichStatus(request, env, ctx);
+  }
+
+  if (url.pathname === "/clay-callback" && request.method === "POST") {
+    return handleClayCallback(request, env, ctx);
+  }
+
   return json({ error: "not_found" }, 404, request, env);
 }
 
-async function handleEnrich(request, env, ctx) {
+async function authenticate(request, env) {
   const origin = request.headers.get("Origin") || "";
   if (!isAllowedOrigin(origin, env)) {
-    return json({ error: "forbidden_origin" }, 403, request, env);
+    return { ok: false, error: "forbidden_origin", status: 403 };
   }
 
   const authHeader = request.headers.get("Authorization") || "";
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
   if (!match) {
-    return json({ error: "missing_token" }, 401, request, env);
+    return { ok: false, error: "missing_token", status: 401 };
   }
 
   const identity = await verifyGoogleToken(match[1], env);
   if (!identity.ok) {
-    return json({ error: identity.error }, 401, request, env);
+    return { ok: false, error: identity.error, status: 401 };
   }
-  const email = identity.email;
 
-  const rateLimited = await isRateLimited(email, env);
+  return { ok: true, email: identity.email };
+}
+
+async function handleEnrich(request, env, ctx) {
+  const auth = await authenticate(request, env);
+  if (!auth.ok) return json({ error: auth.error }, auth.status, request, env);
+
+  const rateLimited = await isRateLimited(auth.email, env);
   if (rateLimited) {
     return json({ error: "rate_limited" }, 429, request, env);
   }
@@ -110,7 +180,8 @@ async function handleEnrich(request, env, ctx) {
 
   let enrichmentTriggered = false;
   if (!hubspotResult.exists || force) {
-    await triggerClayEnrichment(normalized, entityType, email, nameHint, env);
+    await clearCompletion(normalized, entityType, env);
+    await triggerClayEnrichment(normalized, entityType, auth.email, nameHint, env);
     enrichmentTriggered = true;
   }
 
@@ -120,12 +191,97 @@ async function handleEnrich(request, env, ctx) {
       linkedinUrl: normalized,
       existingInHubspot: hubspotResult.exists,
       hubspotUrl: hubspotResult.url || null,
+      existingFields: hubspotResult.fields || null,
       enrichmentTriggered,
     },
     200,
     request,
     env
   );
+}
+
+async function handleEnrichStatus(request, env, ctx) {
+  const auth = await authenticate(request, env);
+  if (!auth.ok) return json({ error: auth.error }, auth.status, request, env);
+
+  const url = new URL(request.url);
+  const entityType = url.searchParams.get("entityType");
+  const rawLinkedinUrl = url.searchParams.get("linkedinUrl") || "";
+
+  if (entityType !== "contact" && entityType !== "company") {
+    return json({ error: "invalid_entity_type" }, 400, request, env);
+  }
+
+  const normalized = normalizeLinkedInUrl(rawLinkedinUrl, entityType);
+  if (!normalized) {
+    return json({ error: "invalid_linkedin_url" }, 400, request, env);
+  }
+
+  if (!env.APP_KV) {
+    return json({ status: "unavailable" }, 200, request, env);
+  }
+
+  const raw = await env.APP_KV.get(completionKey(normalized, entityType));
+  if (!raw) {
+    return json({ status: "pending" }, 200, request, env);
+  }
+
+  let stored;
+  try {
+    stored = JSON.parse(raw);
+  } catch {
+    return json({ status: "pending" }, 200, request, env);
+  }
+
+  return json({ status: "done", fields: stored.fields || {} }, 200, request, env);
+}
+
+async function handleClayCallback(request, env, ctx) {
+  const secret = request.headers.get("X-Callback-Secret") || "";
+  if (!env.CLAY_CALLBACK_SECRET || secret !== env.CLAY_CALLBACK_SECRET) {
+    return json({ error: "forbidden" }, 403, request, env);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, request, env);
+  }
+
+  const entityType = body.entityType;
+  if (entityType !== "contact" && entityType !== "company") {
+    return json({ error: "invalid_entity_type" }, 400, request, env);
+  }
+
+  const normalized = normalizeLinkedInUrl(body.linkedinUrl, entityType);
+  if (!normalized) {
+    return json({ error: "invalid_linkedin_url" }, 400, request, env);
+  }
+
+  const fields = body.fields && typeof body.fields === "object" ? body.fields : {};
+
+  if (!env.APP_KV) {
+    console.warn("app_kv_missing_cannot_store_completion");
+    return json({ ok: true, stored: false }, 200, request, env);
+  }
+
+  await env.APP_KV.put(
+    completionKey(normalized, entityType),
+    JSON.stringify({ fields, receivedAt: new Date().toISOString() }),
+    { expirationTtl: COMPLETION_TTL_SECONDS }
+  );
+
+  return json({ ok: true, stored: true }, 200, request, env);
+}
+
+function completionKey(linkedinUrl, entityType) {
+  return `done:${entityType}:${linkedinUrl}`;
+}
+
+async function clearCompletion(linkedinUrl, entityType, env) {
+  if (!env.APP_KV) return;
+  await env.APP_KV.delete(completionKey(linkedinUrl, entityType));
 }
 
 function normalizeLinkedInUrl(raw, entityType) {
@@ -141,11 +297,13 @@ function normalizeLinkedInUrl(raw, entityType) {
 async function lookupInHubspot(linkedinUrl, entityType, env) {
   if (!env.HUBSPOT_TOKEN) {
     console.warn("hubspot_token_missing");
-    return { exists: false, url: null };
+    return { exists: false, url: null, fields: null };
   }
 
   const objectType = entityType === "contact" ? "contacts" : "companies";
   const propertyName = entityType === "contact" ? "linkedinbio" : "linkedin_company_page";
+  const properties = entityType === "contact" ? CONTACT_PROPERTIES : COMPANY_PROPERTIES;
+  const labels = entityType === "contact" ? CONTACT_PROPERTY_LABELS : COMPANY_PROPERTY_LABELS;
   // Also try without the trailing slash, since existing HubSpot records may
   // have been stored without one.
   const bareUrl = linkedinUrl.replace(/\/$/, "");
@@ -161,19 +319,19 @@ async function lookupInHubspot(linkedinUrl, entityType, env) {
         { filters: [{ propertyName, operator: "EQ", value: linkedinUrl }] },
         { filters: [{ propertyName, operator: "EQ", value: bareUrl }] },
       ],
-      properties: [propertyName],
+      properties,
       limit: 1,
     }),
   });
 
   if (!res.ok) {
     console.error("hubspot_search_failed", res.status, await safeText(res));
-    return { exists: false, url: null };
+    return { exists: false, url: null, fields: null };
   }
 
   const data = await res.json();
   const hit = data.results && data.results[0];
-  if (!hit) return { exists: false, url: null };
+  if (!hit) return { exists: false, url: null, fields: null };
 
   const typeId = entityType === "contact" ? "0-1" : "0-2";
   const portalId = env.HUBSPOT_PORTAL_ID;
@@ -182,7 +340,13 @@ async function lookupInHubspot(linkedinUrl, entityType, env) {
     ? `https://${uiDomain}/contacts/${portalId}/record/${typeId}/${hit.id}`
     : null;
 
-  return { exists: true, url };
+  const fields = {};
+  for (const [key, label] of Object.entries(labels)) {
+    const value = hit.properties && hit.properties[key];
+    if (value) fields[label] = value;
+  }
+
+  return { exists: true, url, fields };
 }
 
 async function triggerClayEnrichment(linkedinUrl, entityType, requestedByEmail, nameHint, env) {
@@ -263,15 +427,15 @@ async function verifyGoogleToken(accessToken, env) {
 }
 
 async function isRateLimited(email, env) {
-  if (!env.RATE_LIMIT_KV) return false;
+  if (!env.APP_KV) return false;
 
   const key = `rl:${email}`;
-  const raw = await env.RATE_LIMIT_KV.get(key);
+  const raw = await env.APP_KV.get(key);
   const count = raw ? parseInt(raw, 10) || 0 : 0;
 
   if (count >= RATE_LIMIT_MAX_REQUESTS) return true;
 
-  await env.RATE_LIMIT_KV.put(key, String(count + 1), {
+  await env.APP_KV.put(key, String(count + 1), {
     expirationTtl: RATE_LIMIT_WINDOW_SECONDS,
   });
   return false;
