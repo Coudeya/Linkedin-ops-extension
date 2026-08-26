@@ -50,7 +50,7 @@
 const CONTACT_URL_RE = /^https:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/in\/([^/?#]+)/i;
 const COMPANY_URL_RE = /^https:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/company\/([^/?#]+)/i;
 
-const RATE_LIMIT_MAX_REQUESTS = 60; // per user, per hour
+const RATE_LIMIT_MAX_REQUESTS = 300; // per user, per hour (the check runs automatically on every page view)
 const RATE_LIMIT_WINDOW_SECONDS = 60 * 60;
 const COMPLETION_TTL_SECONDS = 15 * 60;
 
@@ -60,6 +60,7 @@ const CONTACT_PROPERTIES = [
   "lastname",
   "email",
   "phone",
+  "mobilephone",
   "jobtitle",
   "company",
 ];
@@ -67,7 +68,8 @@ const CONTACT_PROPERTY_LABELS = {
   firstname: "Prenom",
   lastname: "Nom",
   email: "Email",
-  phone: "Telephone",
+  phone: "Telephone fixe",
+  mobilephone: "Telephone mobile",
   jobtitle: "Poste",
   company: "Entreprise",
 };
@@ -165,6 +167,7 @@ async function handleEnrich(request, env, ctx) {
 
   const entityType = body.entityType;
   const force = body.force === true;
+  const checkOnly = body.checkOnly === true;
   const nameHint = typeof body.name === "string" ? body.name.slice(0, 200) : undefined;
 
   if (entityType !== "contact" && entityType !== "company") {
@@ -178,8 +181,12 @@ async function handleEnrich(request, env, ctx) {
 
   const hubspotResult = await lookupInHubspot(normalized, entityType, env);
 
+  // checkOnly is used for the automatic, silent check that runs whenever a
+  // sales rep lands on a LinkedIn page - it must never spend Clay credits by
+  // itself. Triggering the Clay waterfall only ever happens from an explicit
+  // click (checkOnly absent/false).
   let enrichmentTriggered = false;
-  if (!hubspotResult.exists || force) {
+  if (!checkOnly && (!hubspotResult.exists || force)) {
     await clearCompletion(normalized, entityType, env);
     await triggerClayEnrichment(normalized, entityType, auth.email, nameHint, env);
     enrichmentTriggered = true;
@@ -364,10 +371,13 @@ async function lookupInHubspot(linkedinUrl, entityType, env) {
     ? `https://${uiDomain}/contacts/${portalId}/record/${typeId}/${hit.id}`
     : null;
 
+  // Always include every tracked field, even when blank (null) - the
+  // extension shows a "not filled in" placeholder for those, so a sales rep
+  // sees at a glance what's missing on an existing HubSpot record.
   const fields = {};
   for (const [key, label] of Object.entries(labels)) {
     const value = hit.properties && hit.properties[key];
-    if (value) fields[label] = value;
+    fields[label] = value || null;
   }
 
   return { exists: true, url, fields };

@@ -158,6 +158,7 @@
     .field-row:last-child { border-bottom: none; }
     .field-label { color: #667085; flex: none; }
     .field-value { color: #101828; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+    .field-value.missing { color: #98a2b3; font-weight: 400; font-style: italic; }
 
     .note {
       font-size: 12px;
@@ -252,7 +253,7 @@
   let pollTimer = null;
   let busy = false;
 
-  launcher.addEventListener("click", () => runEnrich(false));
+  launcher.addEventListener("click", () => runEnrich({ checkOnly: true }));
   closeBtn.addEventListener("click", closeCard);
 
   function closeCard() {
@@ -296,8 +297,8 @@
       l.className = "field-label";
       l.textContent = label;
       const v = document.createElement("span");
-      v.className = "field-value";
-      v.textContent = value;
+      v.className = "field-value" + (value ? "" : " missing");
+      v.textContent = value || "Non renseigne";
       row.appendChild(l);
       row.appendChild(v);
       container.appendChild(row);
@@ -326,7 +327,7 @@
     noteEl.classList.toggle("error", !!isError);
   }
 
-  async function runEnrich(force) {
+  async function runEnrich({ force = false, checkOnly = false } = {}) {
     if (busy || !currentEntity) return;
     busy = true;
     stopPolling();
@@ -337,11 +338,16 @@
     try {
       response = await sendToBackground({
         type: "ENRICH",
+        // Only ever pop the interactive Google sign-in prompt from an
+        // explicit user click - the silent auto-check on page load must
+        // never surprise a signed-out sales rep with an OS-level popup.
+        interactive: !checkOnly,
         payload: {
           entityType: currentEntity.type,
           linkedinUrl: currentEntity.url,
           name: currentEntity.name,
           force,
+          checkOnly,
         },
       });
     } catch (err) {
@@ -354,6 +360,9 @@
     if (!response.ok) {
       setStep(hubspotStep, "idle");
       showNote(authOrErrorMessage(response.error), true);
+      if (response.error === "auth_expired" || response.error === "no_token") {
+        addAction("Se connecter avec Google", { primary: true, onClick: () => runEnrich({}) });
+      }
       busy = false;
       return;
     }
@@ -367,8 +376,11 @@
         addAction("Voir dans HubSpot", { href: result.hubspotUrl });
       }
       if (!result.enrichmentTriggered) {
-        addAction("Enrichir quand meme", { onClick: () => runEnrich(true) });
+        addAction("Enrichir quand meme", { primary: true, onClick: () => runEnrich({ force: true }) });
       }
+    } else if (!result.enrichmentTriggered) {
+      showNote("Pas encore de fiche dans HubSpot pour ce contact/cette entreprise.");
+      addAction("Enrichir via Clay", { primary: true, onClick: () => runEnrich({}) });
     }
 
     if (result.enrichmentTriggered) {
@@ -459,7 +471,7 @@
 
   function authOrErrorMessage(errorCode) {
     if (errorCode === "auth_expired" || errorCode === "no_token") {
-      return "Connexion Google requise. Fermez puis cliquez a nouveau pour vous connecter avec votre compte Webyn.";
+      return "Connexion Google requise pour verifier HubSpot.";
     }
     if (errorCode === "domain_not_allowed" || errorCode === "email_not_allowed") {
       return "Acces reserve aux comptes Google Webyn (@webyn.ai).";
@@ -546,8 +558,11 @@
     if (changed) {
       stopPolling();
       card.hidden = true;
-      launcher.hidden = false;
+      launcher.hidden = true;
       busy = false;
+      // Silent, free HubSpot check as soon as a new profile/company page
+      // loads - no Clay credits spent unless the sales rep explicitly asks.
+      runEnrich({ checkOnly: true });
     }
   }
 

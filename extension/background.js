@@ -10,7 +10,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message) return false;
 
   if (message.type === "ENRICH") {
-    handleRequest("POST", "/enrich", message.payload, true)
+    handleRequest("POST", "/enrich", message.payload, message.interactive !== false)
       .then((result) => sendResponse({ ok: true, result }))
       .catch((err) => sendResponse({ ok: false, error: describeError(err) }));
     return true; // keep the message channel open for the async response
