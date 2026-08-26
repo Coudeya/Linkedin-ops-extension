@@ -460,7 +460,11 @@ async function lookupInHubspot(linkedinUrl, entityType, env, emailHint) {
   }
 
   const objectType = entityType === "contact" ? "contacts" : "companies";
-  const propertyName = entityType === "contact" ? "linkedinbio" : "linkedin_company_page";
+  // Contacts can have their LinkedIn URL on either property depending on how
+  // the record was created (linkedin_profile_url is the one actually
+  // populated on most contacts in this portal - linkedinbio is kept as a
+  // secondary fallback for older/differently-sourced records).
+  const propertyNames = entityType === "contact" ? ["linkedin_profile_url", "linkedinbio"] : ["linkedin_company_page"];
   const properties = entityType === "contact" ? CONTACT_PROPERTIES : COMPANY_PROPERTIES;
   const labels = entityType === "contact" ? CONTACT_PROPERTY_LABELS : COMPANY_PROPERTY_LABELS;
   // Also try without the trailing slash, since existing HubSpot records may
@@ -468,13 +472,15 @@ async function lookupInHubspot(linkedinUrl, entityType, env, emailHint) {
   const bareUrl = linkedinUrl.replace(/\/$/, "");
 
   // filterGroups are OR'd together by the HubSpot search API, so this
-  // matches on LinkedIn URL (with/without trailing slash) OR, when known,
-  // the contact's email - covering records Clay matched/created by email
-  // without ever populating the LinkedIn URL property.
-  const filterGroups = [
-    { filters: [{ propertyName, operator: "EQ", value: linkedinUrl }] },
-    { filters: [{ propertyName, operator: "EQ", value: bareUrl }] },
-  ];
+  // matches on LinkedIn URL (with/without trailing slash, on any of the
+  // candidate properties) OR, when known, the contact's email - covering
+  // records Clay matched/created by email without ever populating a
+  // LinkedIn URL property at all.
+  const filterGroups = [];
+  for (const propertyName of propertyNames) {
+    filterGroups.push({ filters: [{ propertyName, operator: "EQ", value: linkedinUrl }] });
+    filterGroups.push({ filters: [{ propertyName, operator: "EQ", value: bareUrl }] });
+  }
   if (emailHint && entityType === "contact") {
     filterGroups.push({ filters: [{ propertyName: "email", operator: "EQ", value: emailHint }] });
   }
