@@ -100,6 +100,8 @@ const COMPANY_PROPERTY_LABELS = {
 // resolveOwnerName() and injected as "Proprietaire" instead, see below.
 const OWNER_FIELD_LABEL = "Proprietaire";
 
+const DEAL_PROPERTIES = ["dealname", "amount", "dealstage", "closedate", "hs_is_closed", "pipeline"];
+
 export default {
   async fetch(request, env, ctx) {
     try {
@@ -208,9 +210,16 @@ async function handleEnrich(request, env, ctx) {
         exists: true,
         url: stored.hubspotUrl || null,
         fields: stored.fields || {},
+        hubspotId: stored.hubspotId || null,
       };
     }
   }
+
+  // A sales rep only cares whether there's already a deal "in flight" - only
+  // fetched (and only shown) once we actually know the record exists.
+  const deal = hubspotResult.exists
+    ? await fetchOpenDeal(entityType, hubspotResult.hubspotId, env)
+    : null;
 
   // checkOnly is used for the automatic, silent check that runs whenever a
   // sales rep lands on a LinkedIn page - it must never spend Clay credits by
@@ -230,6 +239,7 @@ async function handleEnrich(request, env, ctx) {
       existingInHubspot: hubspotResult.exists,
       hubspotUrl: hubspotResult.url || null,
       existingFields: hubspotResult.fields || null,
+      deal,
       enrichmentTriggered,
     },
     200,
@@ -270,12 +280,16 @@ async function handleEnrichStatus(request, env, ctx) {
     return json({ status: "pending" }, 200, request, env);
   }
 
+  const deal =
+    stored.hubspotFound === true ? await fetchOpenDeal(entityType, stored.hubspotId, env) : null;
+
   return json(
     {
       status: "done",
       fields: stored.fields || {},
       hubspotFound: stored.hubspotFound,
       hubspotUrl: stored.hubspotUrl || null,
+      deal,
     },
     200,
     request,
@@ -371,7 +385,7 @@ async function handleClayCallback(request, env, ctx) {
 
   await env.APP_KV.put(
     completionKey(normalized, entityType),
-    JSON.stringify({ fields, hubspotFound, hubspotUrl, receivedAt: new Date().toISOString() }),
+    JSON.stringify({ fields, hubspotFound, hubspotId: hubspotId || null, hubspotUrl, receivedAt: new Date().toISOString() }),
     { expirationTtl: COMPLETION_TTL_SECONDS }
   );
 
@@ -409,11 +423,8 @@ function normalizeLinkedInUrl(raw, entityType) {
 }
 
 function buildHubspotUrl(entityType, hubspotId, env) {
-  if (!hubspotId) return null;
   const typeId = entityType === "contact" ? "0-1" : "0-2";
-  const portalId = env.HUBSPOT_PORTAL_ID;
-  const uiDomain = env.HUBSPOT_UI_DOMAIN || "app.hubspot.com";
-  return portalId ? `https://${uiDomain}/contacts/${portalId}/record/${typeId}/${hubspotId}` : null;
+  return buildRecordUrl(typeId, hubspotId, env);
 }
 
 async function lookupInHubspot(linkedinUrl, entityType, env, emailHint) {
@@ -478,7 +489,67 @@ async function lookupInHubspot(linkedinUrl, entityType, env, emailHint) {
   const ownerId = hit.properties && hit.properties.hubspot_owner_id;
   fields[OWNER_FIELD_LABEL] = ownerId ? await resolveOwnerName(ownerId, env) : null;
 
-  return { exists: true, url, fields };
+  return { exists: true, url, fields, hubspotId: hit.id };
+}
+
+function buildRecordUrl(typeId, id, env) {
+  if (!id) return null;
+  const portalId = env.HUBSPOT_PORTAL_ID;
+  const uiDomain = env.HUBSPOT_UI_DOMAIN || "app.hubspot.com";
+  return portalId ? `https://${uiDomain}/contacts/${portalId}/record/${typeId}/${id}` : null;
+}
+
+// Looks up the deals associated with a contact/company and returns the first
+// still-open one (a sales rep only cares whether a deal is already "in
+// flight" - closed won/lost deals aren't relevant here). Returns null when
+// there's no open deal, so the UI can simply hide the block in that case.
+async function fetchOpenDeal(entityType, hubspotId, env) {
+  if (!hubspotId || !env.HUBSPOT_TOKEN) return null;
+  const objectType = entityType === "contact" ? "contacts" : "companies";
+
+  try {
+    const assocRes = await fetch(
+      `https://api.hubapi.com/crm/v4/objects/${objectType}/${encodeURIComponent(hubspotId)}/associations/deals`,
+      { headers: { Authorization: `Bearer ${env.HUBSPOT_TOKEN}` } }
+    );
+    if (!assocRes.ok) {
+      console.error("hubspot_deal_associations_failed", hubspotId, assocRes.status, await safeText(assocRes));
+      return null;
+    }
+    const assocData = await assocRes.json();
+    const dealIds = (assocData.results || []).map((r) => r.toObjectId).filter(Boolean);
+    if (dealIds.length === 0) return null;
+
+    const batchRes = await fetch("https://api.hubapi.com/crm/v3/objects/deals/batch/read", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.HUBSPOT_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        properties: DEAL_PROPERTIES,
+        inputs: dealIds.map((id) => ({ id })),
+      }),
+    });
+    if (!batchRes.ok) {
+      console.error("hubspot_deal_batch_read_failed", hubspotId, batchRes.status, await safeText(batchRes));
+      return null;
+    }
+    const batchData = await batchRes.json();
+    const openDeal = (batchData.results || []).find((d) => d.properties && d.properties.hs_is_closed !== "true");
+    if (!openDeal) return null;
+
+    return {
+      name: openDeal.properties.dealname || "Deal sans nom",
+      amount: openDeal.properties.amount || null,
+      stage: openDeal.properties.dealstage || null,
+      closeDate: openDeal.properties.closedate || null,
+      url: buildRecordUrl("0-3", openDeal.id, env),
+    };
+  } catch (err) {
+    console.error("hubspot_deal_lookup_error", hubspotId, err && err.message);
+    return null;
+  }
 }
 
 async function resolveOwnerName(ownerId, env) {

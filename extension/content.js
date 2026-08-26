@@ -158,6 +158,18 @@
     .hs-badge.pending { background: #f2f4f7; color: #667085; }
     .hs-badge.found { background: #e6f7ec; color: #1a9c4b; cursor: pointer; }
     .hs-badge.missing { background: #fdf2e9; color: #b5540a; }
+    .deal-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 6px 13px;
+      border-radius: 999px;
+      background: #eef2ff;
+      color: #3538cd;
+      cursor: pointer;
+    }
     .hs-badge .spinner {
       width: 11px;
       height: 11px;
@@ -264,6 +276,7 @@
           <div class="status-row">
             <span class="hs-badge pending"><span class="spinner"></span><span class="hs-badge-label">Verification...</span></span>
             <span class="clay-line" hidden><span class="spinner"></span><span class="clay-line-label">Enrichissement Clay en cours</span></span>
+            <span class="deal-badge" hidden>💰&nbsp;<span class="deal-badge-label"></span></span>
           </div>
         </div>
         <div class="section existing-section" hidden>
@@ -296,6 +309,8 @@
   const hsBadgeLabel = shadow.querySelector(".hs-badge-label");
   const clayLine = shadow.querySelector(".clay-line");
   const clayLineLabel = shadow.querySelector(".clay-line-label");
+  const dealBadge = shadow.querySelector(".deal-badge");
+  const dealBadgeLabel = shadow.querySelector(".deal-badge-label");
   const existingSection = shadow.querySelector(".existing-section");
   const existingFieldsEl = shadow.querySelector(".existing-fields");
   const newSection = shadow.querySelector(".new-section");
@@ -337,6 +352,7 @@
     setHubspotBadge("pending", "Verification...");
     clayLine.hidden = true;
     clayLine.classList.remove("done");
+    renderDeal(null);
     existingSection.hidden = true;
     newSection.hidden = true;
     existingFieldsEl.innerHTML = "";
@@ -362,6 +378,25 @@
     } else {
       hsBadge.onclick = null;
     }
+  }
+
+  function renderDeal(deal) {
+    if (!deal) {
+      dealBadge.hidden = true;
+      dealBadge.onclick = null;
+      return;
+    }
+    const amountText = deal.amount ? formatAmount(deal.amount) : "";
+    dealBadgeLabel.textContent = amountText ? `${deal.name} - ${amountText}` : deal.name;
+    dealBadge.title = deal.stage ? `Etape : ${deal.stage}` : "";
+    dealBadge.hidden = false;
+    dealBadge.onclick = deal.url ? () => window.open(deal.url, "_blank", "noopener,noreferrer") : null;
+  }
+
+  function formatAmount(amount) {
+    const n = Number(amount);
+    if (!Number.isFinite(n)) return String(amount);
+    return n.toLocaleString("fr-FR", { maximumFractionDigits: 0 }) + " €";
   }
 
   function fieldIcon(label) {
@@ -499,11 +534,13 @@
       setHubspotBadge("found", "Dans HubSpot ↗", result.hubspotUrl);
       existingSection.hidden = !renderFields(existingFieldsEl, result.existingFields);
       updateSubtitleFromFields(currentEntity, result.existingFields || {});
+      renderDeal(result.deal);
       if (!result.enrichmentTriggered) {
         addAction("Enrichir quand meme", { onClick: () => runEnrich({ force: true }) });
       }
     } else {
       setHubspotBadge("missing", "Pas encore dans HubSpot");
+      renderDeal(null);
       if (!result.enrichmentTriggered) {
         addAction("Enrichir via Clay", { primary: true, onClick: () => runEnrich({}) });
       }
@@ -563,6 +600,7 @@
         // LinkedIn-URL-based search would otherwise miss.
         if (response.result.hubspotFound === true) {
           setHubspotBadge("found", "Dans HubSpot ↗ (confirme par Clay)", response.result.hubspotUrl);
+          renderDeal(response.result.deal);
         } else if (response.result.hubspotFound === false) {
           setHubspotBadge("missing", "Pas dans HubSpot (confirme par Clay)");
         } else {
@@ -612,6 +650,7 @@
       setHubspotBadge("found", "Dans HubSpot ↗", result.hubspotUrl);
       existingSection.hidden = !renderFields(existingFieldsEl, result.existingFields);
       updateSubtitleFromFields(currentEntity, result.existingFields || {});
+      renderDeal(result.deal);
     }
   }
 
