@@ -295,11 +295,11 @@ async function handleClayCallback(request, env, ctx) {
   // Accept either a nested {"fields": {...}} object, or - to make the Clay
   // side easier to build - any other top-level keys treated directly as
   // fields (i.e. just POST {"entityType": "...", "linkedinUrl": "...",
-  // "Telephone": "...", "Email": "..."}). "hubspotFound"/"hubspotUrl" are
+  // "Telephone": "...", "Email": "..."}). "hubspotFound"/"hubspotId" are
   // reserved: they let Clay report its own HubSpot lookup result (which is
   // authoritative - Clay's HubSpot sync often matches contacts by email, so
   // it can find records our own LinkedIn-URL-based search misses).
-  const RESERVED_KEYS = new Set(["entityType", "linkedinUrl", "fields", "hubspotFound", "hubspotUrl"]);
+  const RESERVED_KEYS = new Set(["entityType", "linkedinUrl", "fields", "hubspotFound", "hubspotId"]);
   let fields = {};
   if (body.fields && typeof body.fields === "object") {
     fields = body.fields;
@@ -311,12 +311,21 @@ async function handleClayCallback(request, env, ctx) {
     }
   }
 
+  // hubspotFound is meant to be filled directly from Clay's own lookup
+  // column (e.g. "Found 1 object(s)" / "No objects found"), so we match on
+  // prefixes/keywords rather than requiring an exact "true"/"false" string.
   let hubspotFound;
   if (body.hubspotFound !== undefined && body.hubspotFound !== null && body.hubspotFound !== "") {
     const raw = String(body.hubspotFound).trim().toLowerCase();
-    hubspotFound = ["true", "yes", "found", "1"].includes(raw);
+    if (raw.startsWith("found") || ["true", "yes", "1"].includes(raw)) {
+      hubspotFound = true;
+    } else if (raw.startsWith("no object") || ["false", "no", "0"].includes(raw)) {
+      hubspotFound = false;
+    }
   }
-  const hubspotUrl = typeof body.hubspotUrl === "string" && body.hubspotUrl ? body.hubspotUrl : null;
+
+  const hubspotId = typeof body.hubspotId === "string" || typeof body.hubspotId === "number" ? String(body.hubspotId) : "";
+  const hubspotUrl = hubspotId ? buildHubspotUrl(entityType, hubspotId, env) : null;
 
   if (!env.APP_KV) {
     console.warn("app_kv_missing_cannot_store_completion");
@@ -349,6 +358,14 @@ function normalizeLinkedInUrl(raw, entityType) {
   const slug = m[1].toLowerCase();
   const segment = entityType === "contact" ? "in" : "company";
   return `https://www.linkedin.com/${segment}/${slug}/`;
+}
+
+function buildHubspotUrl(entityType, hubspotId, env) {
+  if (!hubspotId) return null;
+  const typeId = entityType === "contact" ? "0-1" : "0-2";
+  const portalId = env.HUBSPOT_PORTAL_ID;
+  const uiDomain = env.HUBSPOT_UI_DOMAIN || "app.hubspot.com";
+  return portalId ? `https://${uiDomain}/contacts/${portalId}/record/${typeId}/${hubspotId}` : null;
 }
 
 async function lookupInHubspot(linkedinUrl, entityType, env, emailHint) {
@@ -399,12 +416,7 @@ async function lookupInHubspot(linkedinUrl, entityType, env, emailHint) {
   const hit = data.results && data.results[0];
   if (!hit) return { exists: false, url: null, fields: null };
 
-  const typeId = entityType === "contact" ? "0-1" : "0-2";
-  const portalId = env.HUBSPOT_PORTAL_ID;
-  const uiDomain = env.HUBSPOT_UI_DOMAIN || "app.hubspot.com";
-  const url = portalId
-    ? `https://${uiDomain}/contacts/${portalId}/record/${typeId}/${hit.id}`
-    : null;
+  const url = buildHubspotUrl(entityType, hit.id, env);
 
   // Always include every tracked field, even when blank (null) - the
   // extension shows a "not filled in" placeholder for those, so a sales rep
