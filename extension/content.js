@@ -396,12 +396,20 @@
     }
     const meta = DEAL_STATUS_META[deal.status] || DEAL_STATUS_META.open;
     const amountText = deal.amount ? formatAmount(deal.amount) : "";
+    const closeDateText = deal.closeDate ? formatDate(deal.closeDate) : "";
+    const parts = [deal.name, amountText, closeDateText ? `Cloture ${closeDateText}` : ""].filter(Boolean);
     dealBadgeIcon.textContent = meta.icon;
-    dealBadgeLabel.textContent = meta.prefix + (amountText ? `${deal.name} - ${amountText}` : deal.name);
+    dealBadgeLabel.textContent = meta.prefix + parts.join(" - ");
     dealBadge.className = "deal-badge " + (deal.status || "open");
     dealBadge.title = deal.stage ? `Etape : ${deal.stage}` : "";
     dealBadge.hidden = false;
     dealBadge.onclick = deal.url ? () => window.open(deal.url, "_blank", "noopener,noreferrer") : null;
+  }
+
+  function formatDate(dateString) {
+    const d = new Date(dateString);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
   }
 
   function formatAmount(amount) {

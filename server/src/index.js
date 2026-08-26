@@ -236,7 +236,6 @@ async function handleEnrich(request, env, ctx) {
   const deal = hubspotResult.exists
     ? await fetchRelevantDeal(entityType, hubspotResult.hubspotId, env)
     : null;
-  console.warn("debug_response_deal", JSON.stringify({ entityType, hubspotId: hubspotResult.hubspotId, exists: hubspotResult.exists, deal }));
 
   // checkOnly is used for the automatic, silent check that runs whenever a
   // sales rep lands on a LinkedIn page - it must never spend Clay credits by
