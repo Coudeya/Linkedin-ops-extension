@@ -547,42 +547,25 @@ function buildRecordUrl(typeId, id, env) {
 // Looks up the deals associated with a contact/company. Prefers a still-open
 // one (a sales rep mostly cares whether a deal is already "in flight"), but
 // falls back to the most recently touched deal (won or lost) when there's no
-// open deal, so a rep can still see deal history at a glance. Returns null
-// only when there's genuinely no deal at all.
+// open deal, so a rep can still see deal history at a glance. For contacts,
+// deals are very often attached to the company rather than the person, so
+// this also pulls in the contact's primary company's deals. Returns null
+// only when there's genuinely no deal at all, on either side.
 async function fetchRelevantDeal(entityType, hubspotId, env) {
   if (!hubspotId || !env.HUBSPOT_TOKEN) return null;
   const objectType = entityType === "contact" ? "contacts" : "companies";
 
   try {
-    const assocRes = await fetch(
-      `https://api.hubapi.com/crm/v4/objects/${objectType}/${encodeURIComponent(hubspotId)}/associations/deals`,
-      { headers: { Authorization: `Bearer ${env.HUBSPOT_TOKEN}` } }
-    );
-    if (!assocRes.ok) {
-      console.error("hubspot_deal_associations_failed", hubspotId, assocRes.status, await safeText(assocRes));
-      return null;
-    }
-    const assocData = await assocRes.json();
-    const dealIds = (assocData.results || []).map((r) => r.toObjectId).filter(Boolean);
-    if (dealIds.length === 0) return null;
+    let deals = await fetchAssociatedDeals(objectType, hubspotId, env);
 
-    const batchRes = await fetch("https://api.hubapi.com/crm/v3/objects/deals/batch/read", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.HUBSPOT_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        properties: DEAL_PROPERTIES,
-        inputs: dealIds.map((id) => ({ id })),
-      }),
-    });
-    if (!batchRes.ok) {
-      console.error("hubspot_deal_batch_read_failed", hubspotId, batchRes.status, await safeText(batchRes));
-      return null;
+    if (entityType === "contact") {
+      const companyId = await fetchPrimaryCompanyId(hubspotId, env);
+      if (companyId) {
+        const companyDeals = await fetchAssociatedDeals("companies", companyId, env);
+        deals = deals.concat(companyDeals);
+      }
     }
-    const batchData = await batchRes.json();
-    const deals = batchData.results || [];
+
     if (deals.length === 0) return null;
 
     const openDeal = deals.find((d) => d.properties && d.properties.hs_is_closed !== "true");
@@ -613,6 +596,58 @@ async function fetchRelevantDeal(entityType, hubspotId, env) {
     console.error("hubspot_deal_lookup_error", hubspotId, err && err.message);
     return null;
   }
+}
+
+async function fetchAssociatedDeals(objectType, hubspotId, env) {
+  const assocRes = await fetch(
+    `https://api.hubapi.com/crm/v4/objects/${objectType}/${encodeURIComponent(hubspotId)}/associations/deals`,
+    { headers: { Authorization: `Bearer ${env.HUBSPOT_TOKEN}` } }
+  );
+  if (!assocRes.ok) {
+    console.error("hubspot_deal_associations_failed", hubspotId, assocRes.status, await safeText(assocRes));
+    return [];
+  }
+  const assocData = await assocRes.json();
+  const dealIds = (assocData.results || []).map((r) => r.toObjectId).filter(Boolean);
+  if (dealIds.length === 0) return [];
+
+  const batchRes = await fetch("https://api.hubapi.com/crm/v3/objects/deals/batch/read", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.HUBSPOT_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      properties: DEAL_PROPERTIES,
+      inputs: dealIds.map((id) => ({ id })),
+    }),
+  });
+  if (!batchRes.ok) {
+    console.error("hubspot_deal_batch_read_failed", hubspotId, batchRes.status, await safeText(batchRes));
+    return [];
+  }
+  const batchData = await batchRes.json();
+  return batchData.results || [];
+}
+
+// The legacy "associatedcompanyid" property is often blank in portals that
+// manage company associations through the modern Associations API/UI rather
+// than the old single-company field, so read the real association instead.
+// Most contacts only have one associated company; when there's more than
+// one, just take the first one returned rather than trying to parse
+// association-type labels for "primary".
+async function fetchPrimaryCompanyId(contactId, env) {
+  const res = await fetch(
+    `https://api.hubapi.com/crm/v4/objects/contacts/${encodeURIComponent(contactId)}/associations/companies`,
+    { headers: { Authorization: `Bearer ${env.HUBSPOT_TOKEN}` } }
+  );
+  if (!res.ok) {
+    console.error("hubspot_primary_company_lookup_failed", contactId, res.status, await safeText(res));
+    return null;
+  }
+  const data = await res.json();
+  const first = (data.results || [])[0];
+  return (first && first.toObjectId) || null;
 }
 
 async function resolveOwnerName(ownerId, env) {
