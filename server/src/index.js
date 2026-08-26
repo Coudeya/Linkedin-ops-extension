@@ -467,20 +467,23 @@ async function lookupInHubspot(linkedinUrl, entityType, env, emailHint) {
   const propertyNames = entityType === "contact" ? ["linkedin_profile_url", "linkedinbio"] : ["linkedin_company_page"];
   const properties = entityType === "contact" ? CONTACT_PROPERTIES : COMPANY_PROPERTIES;
   const labels = entityType === "contact" ? CONTACT_PROPERTY_LABELS : COMPANY_PROPERTY_LABELS;
-  // Also try without the trailing slash, since existing HubSpot records may
-  // have been stored without one.
-  const bareUrl = linkedinUrl.replace(/\/$/, "");
+
+  // Stored LinkedIn URLs vary a lot in format (with/without "https://", with/
+  // without "www.", with/without a trailing slash, sometimes extra path
+  // segments) depending on how the record was created - an exact-match
+  // search misses most of them. The slug itself (the part that uniquely
+  // identifies the profile/company, e.g. "marco-tarchoune-a0a52311a") is the
+  // one stable piece, so match on that as a token instead of the full URL.
+  const segment = entityType === "contact" ? "in" : "company";
+  const slug = linkedinUrl.replace(new RegExp(`^https://www\\.linkedin\\.com/${segment}/`), "").replace(/\/$/, "");
 
   // filterGroups are OR'd together by the HubSpot search API, so this
-  // matches on LinkedIn URL (with/without trailing slash, on any of the
-  // candidate properties) OR, when known, the contact's email - covering
-  // records Clay matched/created by email without ever populating a
-  // LinkedIn URL property at all.
-  const filterGroups = [];
-  for (const propertyName of propertyNames) {
-    filterGroups.push({ filters: [{ propertyName, operator: "EQ", value: linkedinUrl }] });
-    filterGroups.push({ filters: [{ propertyName, operator: "EQ", value: bareUrl }] });
-  }
+  // matches the slug on any of the candidate properties OR, when known, the
+  // contact's email - covering records Clay matched/created by email
+  // without ever populating a LinkedIn URL property at all.
+  const filterGroups = propertyNames.map((propertyName) => ({
+    filters: [{ propertyName, operator: "CONTAINS_TOKEN", value: slug }],
+  }));
   if (emailHint && entityType === "contact") {
     filterGroups.push({ filters: [{ propertyName: "email", operator: "EQ", value: emailHint }] });
   }
