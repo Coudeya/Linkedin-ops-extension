@@ -506,16 +506,18 @@ async function lookupInHubspot(linkedinUrl, entityType, env, emailHint) {
     // character was transliterated (e.g. observed in practice: "é" shows as
     // a plain hyphen in the live LinkedIn URL but is percent-encoded in
     // HubSpot - "cr-ations-fusalp" vs "cr%C3%A9ations-fusalp" share no
-    // substring at all around that letter). Fall back to the slug's most
-    // distinctive whole word(s), which usually survive any such drift.
-    const tokens = distinctiveSlugTokens(decodedSlug);
-    if (tokens.length > 0) {
-      const tokenFilterGroups = [];
-      for (const propertyName of propertyNames) {
-        for (const token of tokens) {
-          tokenFilterGroups.push({ filters: [{ propertyName, operator: "CONTAINS_TOKEN", value: token }] });
-        }
-      }
+    // substring at all around that letter). Fall back to the slug's single
+    // trailing word fragment (typically the brand name, or the random id
+    // suffix LinkedIn appends to profile slugs) - deliberately only ONE
+    // token, and only the most specific one: a middle fragment like
+    // "ations" (from "cr-ations-fusalp") is common enough to false-positive
+    // match a completely unrelated record, which is worse than not finding
+    // one at all.
+    const token = distinctiveSlugToken(decodedSlug);
+    if (token) {
+      const tokenFilterGroups = propertyNames.map((propertyName) => ({
+        filters: [{ propertyName, operator: "CONTAINS_TOKEN", value: token }],
+      }));
       hit = await runHubspotSearch(objectType, properties, tokenFilterGroups, env);
     }
   }
@@ -562,15 +564,18 @@ async function runHubspotSearch(objectType, properties, filterGroups, env) {
   return (data.results && data.results[0]) || null;
 }
 
-// Splits a slug into its alphanumeric word fragments and keeps the longest
-// ones (short fragments like "cr" or "in" are too generic to search on
-// safely) - at most 2, to stay within HubSpot's 5-filterGroup-per-search
-// limit once combined with the candidate property names.
-function distinctiveSlugTokens(slug) {
-  const tokens = (slug || "").split(/[^a-z0-9]+/i).filter((t) => t.length >= 4);
-  const unique = [...new Set(tokens)];
-  unique.sort((a, b) => b.length - a.length);
-  return unique.slice(0, 2);
+// Returns the LAST alphanumeric fragment of the slug that's long enough to
+// be safely specific (short/generic fragments like "cr" or mid-word pieces
+// like "ations" risk matching an unrelated record). The trailing fragment is
+// usually the brand name ("...-fusalp") or LinkedIn's random id suffix
+// ("...-a0a52311a"), both of which are far more likely to be unique than an
+// arbitrary earlier word in the slug.
+function distinctiveSlugToken(slug) {
+  const tokens = (slug || "").split(/[^a-z0-9]+/i);
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    if (tokens[i].length >= 4) return tokens[i];
+  }
+  return null;
 }
 
 function buildRecordUrl(typeId, id, env) {
@@ -593,14 +598,11 @@ async function fetchRelevantDeal(entityType, hubspotId, env) {
 
   try {
     let deals = await fetchAssociatedDeals(objectType, hubspotId, env);
-    console.warn("debug_deal_own", JSON.stringify({ entityType, hubspotId, ownDealCount: deals.length }));
 
     if (entityType === "contact") {
       const companyId = await fetchPrimaryCompanyId(hubspotId, env);
-      console.warn("debug_deal_companyId", JSON.stringify({ hubspotId, companyId }));
       if (companyId) {
         const companyDeals = await fetchAssociatedDeals("companies", companyId, env);
-        console.warn("debug_deal_company", JSON.stringify({ companyId, companyDealCount: companyDeals.length }));
         deals = deals.concat(companyDeals);
       }
     }
