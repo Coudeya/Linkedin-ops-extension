@@ -52,7 +52,14 @@ const COMPANY_URL_RE = /^https:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/company\/([^/
 
 const RATE_LIMIT_MAX_REQUESTS = 300; // per user, per hour (the check runs automatically on every page view)
 const RATE_LIMIT_WINDOW_SECONDS = 60 * 60;
-const COMPLETION_TTL_SECONDS = 15 * 60;
+// This isn't just a short-lived "poll until Clay finishes" cache - it's also
+// the fallback /enrich reads from when its own live HubSpot search misses a
+// record (e.g. Clay matched/created it by email, and linkedinbio was never
+// populated). That fallback is only useful if Clay's verdict outlives a
+// single browsing session, so keep it around for months, not minutes - a
+// sales rep revisiting a profile a day (or a month) later should still see
+// "already in HubSpot" without needing to re-run Clay.
+const COMPLETION_TTL_SECONDS = 180 * 24 * 60 * 60; // 180 days
 
 const CONTACT_PROPERTIES = [
   "linkedinbio",
