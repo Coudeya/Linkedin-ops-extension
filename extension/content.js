@@ -20,6 +20,7 @@
     [/secteur/i, "🏷"],
     [/ville|pays/i, "📍"],
     [/effectif/i, "👥"],
+    [/propri.taire|owner/i, "👤"],
   ];
 
   const PANEL_CSS = `

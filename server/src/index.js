@@ -63,6 +63,7 @@ const CONTACT_PROPERTIES = [
   "mobilephone",
   "jobtitle",
   "company",
+  "hubspot_owner_id",
 ];
 const CONTACT_PROPERTY_LABELS = {
   firstname: "Prenom",
@@ -82,6 +83,7 @@ const COMPANY_PROPERTIES = [
   "city",
   "country",
   "numberofemployees",
+  "hubspot_owner_id",
 ];
 const COMPANY_PROPERTY_LABELS = {
   name: "Nom",
@@ -91,6 +93,12 @@ const COMPANY_PROPERTY_LABELS = {
   country: "Pays",
   numberofemployees: "Effectif",
 };
+
+// hubspot_owner_id is deliberately excluded from the *_PROPERTY_LABELS maps
+// above (which drive the generic "render every property" loop) because it's
+// a numeric id, not a display value - it's resolved to a human name via
+// resolveOwnerName() and injected as "Proprietaire" instead, see below.
+const OWNER_FIELD_LABEL = "Proprietaire";
 
 export default {
   async fetch(request, env, ctx) {
@@ -309,7 +317,14 @@ async function handleClayCallback(request, env, ctx) {
   // reserved: they let Clay report its own HubSpot lookup result (which is
   // authoritative - Clay's HubSpot sync often matches contacts by email, so
   // it can find records our own LinkedIn-URL-based search misses).
-  const RESERVED_KEYS = new Set(["entityType", "linkedinUrl", "fields", "hubspotFound", "hubspotId"]);
+  const RESERVED_KEYS = new Set([
+    "entityType",
+    "linkedinUrl",
+    "fields",
+    "hubspotFound",
+    "hubspotId",
+    "hubspotOwnerId",
+  ]);
   let fields = {};
   if (body.fields && typeof body.fields === "object") {
     fields = body.fields;
@@ -336,6 +351,18 @@ async function handleClayCallback(request, env, ctx) {
 
   const hubspotId = typeof body.hubspotId === "string" || typeof body.hubspotId === "number" ? String(body.hubspotId) : "";
   const hubspotUrl = hubspotId ? buildHubspotUrl(entityType, hubspotId, env) : null;
+
+  // hubspotOwnerId is the raw numeric HubSpot owner id (from the same
+  // Lookup column Clay already uses for hubspotId) - resolve it to a human
+  // readable name via the HubSpot Owners API, same as the direct-search path.
+  const hubspotOwnerId =
+    typeof body.hubspotOwnerId === "string" || typeof body.hubspotOwnerId === "number"
+      ? String(body.hubspotOwnerId).trim()
+      : "";
+  if (hubspotOwnerId) {
+    const ownerName = await resolveOwnerName(hubspotOwnerId, env);
+    fields[OWNER_FIELD_LABEL] = ownerName || hubspotOwnerId;
+  }
 
   if (!env.APP_KV) {
     console.warn("app_kv_missing_cannot_store_completion");
@@ -448,7 +475,29 @@ async function lookupInHubspot(linkedinUrl, entityType, env, emailHint) {
     fields[label] = value || null;
   }
 
+  const ownerId = hit.properties && hit.properties.hubspot_owner_id;
+  fields[OWNER_FIELD_LABEL] = ownerId ? await resolveOwnerName(ownerId, env) : null;
+
   return { exists: true, url, fields };
+}
+
+async function resolveOwnerName(ownerId, env) {
+  if (!ownerId || !env.HUBSPOT_TOKEN) return null;
+  try {
+    const res = await fetch(`https://api.hubapi.com/crm/v3/owners/${encodeURIComponent(ownerId)}`, {
+      headers: { Authorization: `Bearer ${env.HUBSPOT_TOKEN}` },
+    });
+    if (!res.ok) {
+      console.error("hubspot_owner_lookup_failed", ownerId, res.status, await safeText(res));
+      return null;
+    }
+    const data = await res.json();
+    const name = [data.firstName, data.lastName].filter(Boolean).join(" ").trim();
+    return name || data.email || null;
+  } catch (err) {
+    console.error("hubspot_owner_lookup_error", ownerId, err && err.message);
+    return null;
+  }
 }
 
 async function triggerClayEnrichment(linkedinUrl, entityType, requestedByEmail, nameHint, env) {
