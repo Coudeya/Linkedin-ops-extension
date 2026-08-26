@@ -433,7 +433,17 @@ function normalizeLinkedInUrl(raw, entityType) {
   const re = entityType === "contact" ? CONTACT_URL_RE : COMPANY_URL_RE;
   const m = raw.match(re);
   if (!m) return null;
-  const slug = m[1].toLowerCase();
+  // Slugs with accented characters (e.g. "céline-boquillon") come back from
+  // the browser's location.href percent-encoded ("c%C3%A9line-boquillon"),
+  // but HubSpot/Clay store the human-readable, decoded form - decode here so
+  // both sides compare the same string.
+  let decodedSlug = m[1];
+  try {
+    decodedSlug = decodeURIComponent(decodedSlug);
+  } catch {
+    /* malformed encoding - fall back to the raw slug */
+  }
+  const slug = decodedSlug.toLowerCase();
   const segment = entityType === "contact" ? "in" : "company";
   return `https://www.linkedin.com/${segment}/${slug}/`;
 }

@@ -714,23 +714,37 @@
 
     const contactMatch = href.match(/^https:\/\/www\.linkedin\.com\/in\/([^/?#]+)/);
     if (contactMatch) {
+      const slug = decodeSlug(contactMatch[1]);
       return {
         type: "contact",
-        url: `https://www.linkedin.com/in/${contactMatch[1]}/`,
-        name: extractName(contactMatch[1]),
+        url: `https://www.linkedin.com/in/${slug}/`,
+        name: extractName(slug),
       };
     }
 
     const companyMatch = href.match(/^https:\/\/www\.linkedin\.com\/company\/([^/?#]+)/);
     if (companyMatch) {
+      const slug = decodeSlug(companyMatch[1]);
       return {
         type: "company",
-        url: `https://www.linkedin.com/company/${companyMatch[1]}/`,
-        name: extractName(companyMatch[1]),
+        url: `https://www.linkedin.com/company/${slug}/`,
+        name: extractName(slug),
       };
     }
 
     return null;
+  }
+
+  // location.href percent-encodes accented characters (e.g. "céline" becomes
+  // "c%C3%A9line"), but HubSpot/Clay store the human-readable, decoded form -
+  // decode here so the URL we send to the backend (and search HubSpot with)
+  // matches what's actually stored.
+  function decodeSlug(slug) {
+    try {
+      return decodeURIComponent(slug);
+    } catch {
+      return slug;
+    }
   }
 
   // LinkedIn is a single-page app: navigating between a page's sub-tabs
