@@ -498,26 +498,28 @@ async function lookupInHubspot(linkedinUrl, entityType, env, emailHint) {
     filterGroups.push({ filters: [{ propertyName: "email", operator: "EQ", value: emailHint }] });
   }
 
-  const res = await fetch(`https://api.hubapi.com/crm/v3/objects/${objectType}/search`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.HUBSPOT_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      filterGroups,
-      properties,
-      limit: 1,
-    }),
-  });
+  let hit = await runHubspotSearch(objectType, properties, filterGroups, env);
 
-  if (!res.ok) {
-    console.error("hubspot_search_failed", res.status, await safeText(res));
-    return { exists: false, url: null, fields: null };
+  if (!hit) {
+    // Exact slug matching still misses cases where LinkedIn's current
+    // vanity URL and HubSpot's stored one disagree on how an accented
+    // character was transliterated (e.g. observed in practice: "é" shows as
+    // a plain hyphen in the live LinkedIn URL but is percent-encoded in
+    // HubSpot - "cr-ations-fusalp" vs "cr%C3%A9ations-fusalp" share no
+    // substring at all around that letter). Fall back to the slug's most
+    // distinctive whole word(s), which usually survive any such drift.
+    const tokens = distinctiveSlugTokens(decodedSlug);
+    if (tokens.length > 0) {
+      const tokenFilterGroups = [];
+      for (const propertyName of propertyNames) {
+        for (const token of tokens) {
+          tokenFilterGroups.push({ filters: [{ propertyName, operator: "CONTAINS_TOKEN", value: token }] });
+        }
+      }
+      hit = await runHubspotSearch(objectType, properties, tokenFilterGroups, env);
+    }
   }
 
-  const data = await res.json();
-  const hit = data.results && data.results[0];
   if (!hit) return { exists: false, url: null, fields: null };
 
   const url = buildHubspotUrl(entityType, hit.id, env);
@@ -535,6 +537,40 @@ async function lookupInHubspot(linkedinUrl, entityType, env, emailHint) {
   fields[OWNER_FIELD_LABEL] = ownerId ? await resolveOwnerName(ownerId, env) : null;
 
   return { exists: true, url, fields, hubspotId: hit.id };
+}
+
+async function runHubspotSearch(objectType, properties, filterGroups, env) {
+  const res = await fetch(`https://api.hubapi.com/crm/v3/objects/${objectType}/search`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.HUBSPOT_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      filterGroups,
+      properties,
+      limit: 1,
+    }),
+  });
+
+  if (!res.ok) {
+    console.error("hubspot_search_failed", res.status, await safeText(res));
+    return null;
+  }
+
+  const data = await res.json();
+  return (data.results && data.results[0]) || null;
+}
+
+// Splits a slug into its alphanumeric word fragments and keeps the longest
+// ones (short fragments like "cr" or "in" are too generic to search on
+// safely) - at most 2, to stay within HubSpot's 5-filterGroup-per-search
+// limit once combined with the candidate property names.
+function distinctiveSlugTokens(slug) {
+  const tokens = (slug || "").split(/[^a-z0-9]+/i).filter((t) => t.length >= 4);
+  const unique = [...new Set(tokens)];
+  unique.sort((a, b) => b.length - a.length);
+  return unique.slice(0, 2);
 }
 
 function buildRecordUrl(typeId, id, env) {
@@ -557,11 +593,14 @@ async function fetchRelevantDeal(entityType, hubspotId, env) {
 
   try {
     let deals = await fetchAssociatedDeals(objectType, hubspotId, env);
+    console.warn("debug_deal_own", JSON.stringify({ entityType, hubspotId, ownDealCount: deals.length }));
 
     if (entityType === "contact") {
       const companyId = await fetchPrimaryCompanyId(hubspotId, env);
+      console.warn("debug_deal_companyId", JSON.stringify({ hubspotId, companyId }));
       if (companyId) {
         const companyDeals = await fetchAssociatedDeals("companies", companyId, env);
+        console.warn("debug_deal_company", JSON.stringify({ companyId, companyDealCount: companyDeals.length }));
         deals = deals.concat(companyDeals);
       }
     }
