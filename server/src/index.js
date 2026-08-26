@@ -185,7 +185,24 @@ async function handleEnrich(request, env, ctx) {
     return json({ error: "invalid_linkedin_url" }, 400, request, env);
   }
 
-  const hubspotResult = await lookupInHubspot(normalized, entityType, env, emailHint);
+  let hubspotResult = await lookupInHubspot(normalized, entityType, env, emailHint);
+
+  // Our own live search can miss a record Clay already confirmed exists
+  // (e.g. matched by email, or the extension gave up polling before a slow
+  // Clay run actually finished). If a prior Clay run left a "found"
+  // verdict for this URL, trust it - it's more reliable than our own
+  // LinkedIn-URL-only search, and this makes even the free automatic check
+  // reflect the latest known state without re-running Clay.
+  if (!hubspotResult.exists) {
+    const stored = await getStoredCompletion(normalized, entityType, env);
+    if (stored && stored.hubspotFound === true) {
+      hubspotResult = {
+        exists: true,
+        url: stored.hubspotUrl || null,
+        fields: stored.fields || {},
+      };
+    }
+  }
 
   // checkOnly is used for the automatic, silent check that runs whenever a
   // sales rep lands on a LinkedIn page - it must never spend Clay credits by
@@ -240,15 +257,8 @@ async function handleEnrichStatus(request, env, ctx) {
     return json({ status: "unavailable" }, 200, request, env);
   }
 
-  const raw = await env.APP_KV.get(completionKey(normalized, entityType));
-  if (!raw) {
-    return json({ status: "pending" }, 200, request, env);
-  }
-
-  let stored;
-  try {
-    stored = JSON.parse(raw);
-  } catch {
+  const stored = await getStoredCompletion(normalized, entityType, env);
+  if (!stored) {
     return json({ status: "pending" }, 200, request, env);
   }
 
@@ -348,6 +358,17 @@ function completionKey(linkedinUrl, entityType) {
 async function clearCompletion(linkedinUrl, entityType, env) {
   if (!env.APP_KV) return;
   await env.APP_KV.delete(completionKey(linkedinUrl, entityType));
+}
+
+async function getStoredCompletion(linkedinUrl, entityType, env) {
+  if (!env.APP_KV) return null;
+  const raw = await env.APP_KV.get(completionKey(linkedinUrl, entityType));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }
 
 function normalizeLinkedInUrl(raw, entityType) {
