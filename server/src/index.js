@@ -169,6 +169,12 @@ async function handleEnrich(request, env, ctx) {
   const force = body.force === true;
   const checkOnly = body.checkOnly === true;
   const nameHint = typeof body.name === "string" ? body.name.slice(0, 200) : undefined;
+  // Clay's own HubSpot sync often matches/creates contacts by email rather
+  // than by LinkedIn URL, so a record can exist in HubSpot without our
+  // linkedinbio-based search ever finding it. When the caller already knows
+  // the email (e.g. right after Clay enrichment completed), pass it along
+  // as a fallback match.
+  const emailHint = typeof body.emailHint === "string" ? body.emailHint.slice(0, 320) : undefined;
 
   if (entityType !== "contact" && entityType !== "company") {
     return json({ error: "invalid_entity_type" }, 400, request, env);
@@ -179,7 +185,7 @@ async function handleEnrich(request, env, ctx) {
     return json({ error: "invalid_linkedin_url" }, 400, request, env);
   }
 
-  const hubspotResult = await lookupInHubspot(normalized, entityType, env);
+  const hubspotResult = await lookupInHubspot(normalized, entityType, env, emailHint);
 
   // checkOnly is used for the automatic, silent check that runs whenever a
   // sales rep lands on a LinkedIn page - it must never spend Clay credits by
@@ -325,7 +331,7 @@ function normalizeLinkedInUrl(raw, entityType) {
   return `https://www.linkedin.com/${segment}/${slug}/`;
 }
 
-async function lookupInHubspot(linkedinUrl, entityType, env) {
+async function lookupInHubspot(linkedinUrl, entityType, env, emailHint) {
   if (!env.HUBSPOT_TOKEN) {
     console.warn("hubspot_token_missing");
     return { exists: false, url: null, fields: null };
@@ -339,6 +345,18 @@ async function lookupInHubspot(linkedinUrl, entityType, env) {
   // have been stored without one.
   const bareUrl = linkedinUrl.replace(/\/$/, "");
 
+  // filterGroups are OR'd together by the HubSpot search API, so this
+  // matches on LinkedIn URL (with/without trailing slash) OR, when known,
+  // the contact's email - covering records Clay matched/created by email
+  // without ever populating the LinkedIn URL property.
+  const filterGroups = [
+    { filters: [{ propertyName, operator: "EQ", value: linkedinUrl }] },
+    { filters: [{ propertyName, operator: "EQ", value: bareUrl }] },
+  ];
+  if (emailHint && entityType === "contact") {
+    filterGroups.push({ filters: [{ propertyName: "email", operator: "EQ", value: emailHint }] });
+  }
+
   const res = await fetch(`https://api.hubapi.com/crm/v3/objects/${objectType}/search`, {
     method: "POST",
     headers: {
@@ -346,10 +364,7 @@ async function lookupInHubspot(linkedinUrl, entityType, env) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      filterGroups: [
-        { filters: [{ propertyName, operator: "EQ", value: linkedinUrl }] },
-        { filters: [{ propertyName, operator: "EQ", value: bareUrl }] },
-      ],
+      filterGroups,
       properties,
       limit: 1,
     }),
