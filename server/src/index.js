@@ -475,15 +475,25 @@ async function lookupInHubspot(linkedinUrl, entityType, env, emailHint) {
   // identifies the profile/company, e.g. "marco-tarchoune-a0a52311a") is the
   // one stable piece, so match on that as a token instead of the full URL.
   const segment = entityType === "contact" ? "in" : "company";
-  const slug = linkedinUrl.replace(new RegExp(`^https://www\\.linkedin\\.com/${segment}/`), "").replace(/\/$/, "");
+  const decodedSlug = linkedinUrl.replace(new RegExp(`^https://www\\.linkedin\\.com/${segment}/`), "").replace(/\/$/, "");
+  // Accented slugs can be stored either decoded ("créations-fusalp") or
+  // still percent-encoded ("cr%C3%A9ations-fusalp"), depending on how the
+  // record was synced (a human pasting the browser's address bar vs. an
+  // integration storing LinkedIn's own API URL) - search for both forms
+  // rather than guessing which one a given record used.
+  const encodedSlug = encodeURIComponent(decodedSlug);
+  const slugs = encodedSlug === decodedSlug ? [decodedSlug] : [decodedSlug, encodedSlug];
 
   // filterGroups are OR'd together by the HubSpot search API, so this
-  // matches the slug on any of the candidate properties OR, when known, the
-  // contact's email - covering records Clay matched/created by email
+  // matches any slug form on any of the candidate properties OR, when known,
+  // the contact's email - covering records Clay matched/created by email
   // without ever populating a LinkedIn URL property at all.
-  const filterGroups = propertyNames.map((propertyName) => ({
-    filters: [{ propertyName, operator: "CONTAINS_TOKEN", value: slug }],
-  }));
+  const filterGroups = [];
+  for (const propertyName of propertyNames) {
+    for (const slug of slugs) {
+      filterGroups.push({ filters: [{ propertyName, operator: "CONTAINS_TOKEN", value: slug }] });
+    }
+  }
   if (emailHint && entityType === "contact") {
     filterGroups.push({ filters: [{ propertyName: "email", operator: "EQ", value: emailHint }] });
   }
