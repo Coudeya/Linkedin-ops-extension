@@ -717,7 +717,7 @@
       return {
         type: "contact",
         url: `https://www.linkedin.com/in/${contactMatch[1]}/`,
-        name: extractContactName(),
+        name: extractName(contactMatch[1]),
       };
     }
 
@@ -726,31 +726,46 @@
       return {
         type: "company",
         url: `https://www.linkedin.com/company/${companyMatch[1]}/`,
-        name: extractCompanyName(),
+        name: extractName(companyMatch[1]),
       };
     }
 
     return null;
   }
 
-  function extractContactName() {
+  // LinkedIn is a single-page app: navigating between a page's sub-tabs
+  // (Posts, A propos, ...) doesn't reload the page, and document.title
+  // sometimes lags behind for a moment - it can still read a stale/generic
+  // value like "(4) LinkedIn" (just the unread-notifications badge) right
+  // after navigation. h1 is tried first, then a cleaned-up title, and if
+  // neither gives anything usable we fall back to a name derived from the
+  // URL slug itself, which is always available and never wrong that badly.
+  function extractName(slug) {
     try {
       const h1 = document.querySelector("main h1");
       if (h1 && h1.textContent.trim()) return h1.textContent.trim();
-      return (document.title || "").split(" | ")[0].trim();
+      const fromTitle = cleanTitleName(document.title);
+      if (fromTitle) return fromTitle;
     } catch {
-      return "";
+      /* fall through to the slug-based name */
     }
+    return slugToName(slug);
   }
 
-  function extractCompanyName() {
-    try {
-      const h1 = document.querySelector("h1");
-      if (h1 && h1.textContent.trim()) return h1.textContent.trim();
-      return (document.title || "").split(" | ")[0].trim();
-    } catch {
-      return "";
-    }
+  function cleanTitleName(rawTitle) {
+    const withoutBadge = (rawTitle || "").replace(/^\(\d+\)\s*/, "").trim();
+    const first = withoutBadge.split(" | ")[0].trim();
+    if (!first || /^linkedin$/i.test(first)) return "";
+    return first;
+  }
+
+  function slugToName(slug) {
+    return (slug || "")
+      .replace(/-[0-9][a-z0-9]*$/i, "") // drop a trailing LinkedIn id suffix, e.g. "-9a3588152"
+      .split("-")
+      .filter(Boolean)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(" ");
   }
 
   function refresh() {
