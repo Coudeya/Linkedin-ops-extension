@@ -252,7 +252,17 @@ async function handleEnrichStatus(request, env, ctx) {
     return json({ status: "pending" }, 200, request, env);
   }
 
-  return json({ status: "done", fields: stored.fields || {} }, 200, request, env);
+  return json(
+    {
+      status: "done",
+      fields: stored.fields || {},
+      hubspotFound: stored.hubspotFound,
+      hubspotUrl: stored.hubspotUrl || null,
+    },
+    200,
+    request,
+    env
+  );
 }
 
 async function handleClayCallback(request, env, ctx) {
@@ -285,8 +295,11 @@ async function handleClayCallback(request, env, ctx) {
   // Accept either a nested {"fields": {...}} object, or - to make the Clay
   // side easier to build - any other top-level keys treated directly as
   // fields (i.e. just POST {"entityType": "...", "linkedinUrl": "...",
-  // "Telephone": "...", "Email": "..."}).
-  const RESERVED_KEYS = new Set(["entityType", "linkedinUrl", "fields"]);
+  // "Telephone": "...", "Email": "..."}). "hubspotFound"/"hubspotUrl" are
+  // reserved: they let Clay report its own HubSpot lookup result (which is
+  // authoritative - Clay's HubSpot sync often matches contacts by email, so
+  // it can find records our own LinkedIn-URL-based search misses).
+  const RESERVED_KEYS = new Set(["entityType", "linkedinUrl", "fields", "hubspotFound", "hubspotUrl"]);
   let fields = {};
   if (body.fields && typeof body.fields === "object") {
     fields = body.fields;
@@ -298,6 +311,13 @@ async function handleClayCallback(request, env, ctx) {
     }
   }
 
+  let hubspotFound;
+  if (body.hubspotFound !== undefined && body.hubspotFound !== null && body.hubspotFound !== "") {
+    const raw = String(body.hubspotFound).trim().toLowerCase();
+    hubspotFound = ["true", "yes", "found", "1"].includes(raw);
+  }
+  const hubspotUrl = typeof body.hubspotUrl === "string" && body.hubspotUrl ? body.hubspotUrl : null;
+
   if (!env.APP_KV) {
     console.warn("app_kv_missing_cannot_store_completion");
     return json({ ok: true, stored: false }, 200, request, env);
@@ -305,7 +325,7 @@ async function handleClayCallback(request, env, ctx) {
 
   await env.APP_KV.put(
     completionKey(normalized, entityType),
-    JSON.stringify({ fields, receivedAt: new Date().toISOString() }),
+    JSON.stringify({ fields, hubspotFound, hubspotUrl, receivedAt: new Date().toISOString() }),
     { expirationTtl: COMPLETION_TTL_SECONDS }
   );
 

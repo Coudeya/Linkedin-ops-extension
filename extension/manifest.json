@@ -30,6 +30,12 @@
       "run_at": "document_idle"
     }
   ],
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/webyn-mark.png"],
+      "matches": ["https://www.linkedin.com/*"]
+    }
+  ],
   "permissions": ["identity", "storage"],
   "host_permissions": [
     "https://webyn-linkedin-clay-gateway.alexandrecoude-df4.workers.dev/*"

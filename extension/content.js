@@ -81,14 +81,8 @@
     .brand-badge {
       width: 24px;
       height: 24px;
-      border-radius: 7px;
-      background: #0a3d62;
-      color: #fff;
-      font-weight: 700;
-      font-size: 13px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      display: block;
+      object-fit: contain;
     }
     .brand-title { font-weight: 700; font-size: 14px; color: #101828; }
     .close-btn {
@@ -255,7 +249,7 @@
     <aside class="panel" hidden>
       <div class="panel-header">
         <div class="brand">
-          <span class="brand-badge">W</span>
+          <img class="brand-badge" alt="Webyn" />
           <span class="brand-title">Webyn</span>
         </div>
         <button class="close-btn" type="button" aria-label="Fermer">&times;</button>
@@ -286,6 +280,9 @@
   `;
 
   document.documentElement.appendChild(HOST);
+
+  const brandBadgeImg = shadow.querySelector(".brand-badge");
+  if (brandBadgeImg) brandBadgeImg.src = chrome.runtime.getURL("icons/webyn-mark.png");
 
   const tabBtn = shadow.querySelector(".tab");
   const panel = shadow.querySelector(".panel");
@@ -559,12 +556,22 @@
         if (!hasFields) {
           showNote("Clay a traite la fiche mais n'a pas trouve de nouvelles informations.");
         }
-        // Clay's own HubSpot sync often matches/creates records by email
-        // rather than LinkedIn URL, so re-check now that we may know the
-        // email - this catches "just enriched, already in HubSpot" cases.
-        const emailField = Object.entries(fields).find(([label]) => /email/i.test(label));
-        if (!hsBadgeIsFound() && emailField && emailField[1]) {
-          recheckHubspotAfterEnrichment(entityType, linkedinUrl, emailField[1]);
+
+        // Clay's own HubSpot lookup is authoritative once available - it
+        // catches records Clay matched/created by email that our own
+        // LinkedIn-URL-based search would otherwise miss.
+        if (response.result.hubspotFound === true) {
+          setHubspotBadge("found", "Dans HubSpot ↗ (confirme par Clay)", response.result.hubspotUrl);
+        } else if (response.result.hubspotFound === false) {
+          setHubspotBadge("missing", "Pas dans HubSpot (confirme par Clay)");
+        } else {
+          // Clay didn't report its own verdict - fall back to re-checking
+          // our own HubSpot search with the email Clay just found, in case
+          // the record exists under an email match rather than LinkedIn URL.
+          const emailField = Object.entries(fields).find(([label]) => /email/i.test(label));
+          if (!hsBadgeIsFound() && emailField && emailField[1]) {
+            recheckHubspotAfterEnrichment(entityType, linkedinUrl, emailField[1]);
+          }
         }
         return;
       }
