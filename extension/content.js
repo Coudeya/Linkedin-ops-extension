@@ -166,10 +166,11 @@
       font-weight: 700;
       padding: 6px 13px;
       border-radius: 999px;
-      background: #eef2ff;
-      color: #3538cd;
       cursor: pointer;
     }
+    .deal-badge.open { background: #eef2ff; color: #3538cd; }
+    .deal-badge.won { background: #e6f7ec; color: #1a9c4b; }
+    .deal-badge.lost { background: #f2f4f7; color: #667085; }
     .hs-badge .spinner {
       width: 11px;
       height: 11px;
@@ -276,7 +277,7 @@
           <div class="status-row">
             <span class="hs-badge pending"><span class="spinner"></span><span class="hs-badge-label">Verification...</span></span>
             <span class="clay-line" hidden><span class="spinner"></span><span class="clay-line-label">Enrichissement Clay en cours</span></span>
-            <span class="deal-badge" hidden>💰&nbsp;<span class="deal-badge-label"></span></span>
+            <span class="deal-badge" hidden><span class="deal-badge-icon"></span>&nbsp;<span class="deal-badge-label"></span></span>
           </div>
         </div>
         <div class="section existing-section" hidden>
@@ -310,6 +311,7 @@
   const clayLine = shadow.querySelector(".clay-line");
   const clayLineLabel = shadow.querySelector(".clay-line-label");
   const dealBadge = shadow.querySelector(".deal-badge");
+  const dealBadgeIcon = shadow.querySelector(".deal-badge-icon");
   const dealBadgeLabel = shadow.querySelector(".deal-badge-label");
   const existingSection = shadow.querySelector(".existing-section");
   const existingFieldsEl = shadow.querySelector(".existing-fields");
@@ -380,14 +382,23 @@
     }
   }
 
+  const DEAL_STATUS_META = {
+    open: { icon: "💰", prefix: "" },
+    won: { icon: "✅", prefix: "Dernier deal (gagne) : " },
+    lost: { icon: "❌", prefix: "Dernier deal (perdu) : " },
+  };
+
   function renderDeal(deal) {
     if (!deal) {
       dealBadge.hidden = true;
       dealBadge.onclick = null;
       return;
     }
+    const meta = DEAL_STATUS_META[deal.status] || DEAL_STATUS_META.open;
     const amountText = deal.amount ? formatAmount(deal.amount) : "";
-    dealBadgeLabel.textContent = amountText ? `${deal.name} - ${amountText}` : deal.name;
+    dealBadgeIcon.textContent = meta.icon;
+    dealBadgeLabel.textContent = meta.prefix + (amountText ? `${deal.name} - ${amountText}` : deal.name);
+    dealBadge.className = "deal-badge " + (deal.status || "open");
     dealBadge.title = deal.stage ? `Etape : ${deal.stage}` : "";
     dealBadge.hidden = false;
     dealBadge.onclick = deal.url ? () => window.open(deal.url, "_blank", "noopener,noreferrer") : null;

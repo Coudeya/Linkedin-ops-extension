@@ -107,7 +107,16 @@ const COMPANY_PROPERTY_LABELS = {
 // resolveOwnerName() and injected as "Proprietaire" instead, see below.
 const OWNER_FIELD_LABEL = "Proprietaire";
 
-const DEAL_PROPERTIES = ["dealname", "amount", "dealstage", "closedate", "hs_is_closed", "pipeline"];
+const DEAL_PROPERTIES = [
+  "dealname",
+  "amount",
+  "dealstage",
+  "closedate",
+  "hs_is_closed",
+  "hs_is_closed_won",
+  "hs_lastmodifieddate",
+  "pipeline",
+];
 
 export default {
   async fetch(request, env, ctx) {
@@ -225,7 +234,7 @@ async function handleEnrich(request, env, ctx) {
   // A sales rep only cares whether there's already a deal "in flight" - only
   // fetched (and only shown) once we actually know the record exists.
   const deal = hubspotResult.exists
-    ? await fetchOpenDeal(entityType, hubspotResult.hubspotId, env)
+    ? await fetchRelevantDeal(entityType, hubspotResult.hubspotId, env)
     : null;
 
   // checkOnly is used for the automatic, silent check that runs whenever a
@@ -288,7 +297,7 @@ async function handleEnrichStatus(request, env, ctx) {
   }
 
   const deal =
-    stored.hubspotFound === true ? await fetchOpenDeal(entityType, stored.hubspotId, env) : null;
+    stored.hubspotFound === true ? await fetchRelevantDeal(entityType, stored.hubspotId, env) : null;
 
   return json(
     {
@@ -506,11 +515,12 @@ function buildRecordUrl(typeId, id, env) {
   return portalId ? `https://${uiDomain}/contacts/${portalId}/record/${typeId}/${id}` : null;
 }
 
-// Looks up the deals associated with a contact/company and returns the first
-// still-open one (a sales rep only cares whether a deal is already "in
-// flight" - closed won/lost deals aren't relevant here). Returns null when
-// there's no open deal, so the UI can simply hide the block in that case.
-async function fetchOpenDeal(entityType, hubspotId, env) {
+// Looks up the deals associated with a contact/company. Prefers a still-open
+// one (a sales rep mostly cares whether a deal is already "in flight"), but
+// falls back to the most recently touched deal (won or lost) when there's no
+// open deal, so a rep can still see deal history at a glance. Returns null
+// only when there's genuinely no deal at all.
+async function fetchRelevantDeal(entityType, hubspotId, env) {
   if (!hubspotId || !env.HUBSPOT_TOKEN) return null;
   const objectType = entityType === "contact" ? "contacts" : "companies";
 
@@ -543,15 +553,32 @@ async function fetchOpenDeal(entityType, hubspotId, env) {
       return null;
     }
     const batchData = await batchRes.json();
-    const openDeal = (batchData.results || []).find((d) => d.properties && d.properties.hs_is_closed !== "true");
-    if (!openDeal) return null;
+    const deals = batchData.results || [];
+    if (deals.length === 0) return null;
+
+    const openDeal = deals.find((d) => d.properties && d.properties.hs_is_closed !== "true");
+    let chosen = openDeal;
+    let status = "open";
+
+    if (!chosen) {
+      // No open deal - fall back to the most recently touched closed one.
+      chosen = deals
+        .slice()
+        .sort((a, b) => {
+          const aDate = (a.properties && a.properties.hs_lastmodifieddate) || "";
+          const bDate = (b.properties && b.properties.hs_lastmodifieddate) || "";
+          return bDate.localeCompare(aDate);
+        })[0];
+      status = chosen.properties && chosen.properties.hs_is_closed_won === "true" ? "won" : "lost";
+    }
 
     return {
-      name: openDeal.properties.dealname || "Deal sans nom",
-      amount: openDeal.properties.amount || null,
-      stage: openDeal.properties.dealstage || null,
-      closeDate: openDeal.properties.closedate || null,
-      url: buildRecordUrl("0-3", openDeal.id, env),
+      name: chosen.properties.dealname || "Deal sans nom",
+      amount: chosen.properties.amount || null,
+      stage: chosen.properties.dealstage || null,
+      closeDate: chosen.properties.closedate || null,
+      status,
+      url: buildRecordUrl("0-3", chosen.id, env),
     };
   } catch (err) {
     console.error("hubspot_deal_lookup_error", hubspotId, err && err.message);
